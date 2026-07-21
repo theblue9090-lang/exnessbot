@@ -15,31 +15,56 @@ Website trading bergaya **MetaTrader 5** (dark theme) dengan:
 ## Cara Menjalankan
 
 ```bash
-npm install          # express + ws (metaapi.cloud-sdk opsional, lihat bawah)
+npm install          # express + ws + metaapi.cloud-sdk (koneksi live Exness)
 npm start            # server jalan di http://localhost:3000
 ```
 
-Buka `http://localhost:3000`. Aplikasi langsung berjalan dalam **mode Demo** —
-klik **▶ Start Bot** dan bot langsung trading otomatis di akun demo.
+Buka `http://localhost:3000`. Tanpa konfigurasi apa pun aplikasi berjalan dalam
+**mode Demo**; untuk trading **LIVE** ikuti salah satu dari dua cara di bawah.
 
-## Login ke Exness
+## Trading LIVE di Exness
 
 Exness **tidak memiliki API web publik** — akun Exness adalah akun MetaTrader 5.
 Jembatan standar untuk mengakses akun MT5 dari aplikasi web adalah
-[MetaApi](https://metaapi.cloud) (cloud API untuk MT4/MT5).
+[MetaApi](https://metaapi.cloud) (cloud API untuk MT4/MT5). Daftar gratis di
+[app.metaapi.cloud](https://app.metaapi.cloud) dan buat **token API** (sekali saja).
 
-1. Pasang SDK-nya (sekali saja): `npm install metaapi.cloud-sdk`
-2. Daftar gratis di [app.metaapi.cloud](https://app.metaapi.cloud) dan buat **token API**
-3. Di website, klik **Login Broker → Exness (MT5)** dan isi:
-   - **Nomor akun MT5** (login Exness kamu)
-   - **Password trading** (bukan password investor)
-   - **Server** — misal `Exness-MT5Trial7` (demo) atau `Exness-MT5Real8`
-     (terlihat di aplikasi/email Exness)
-   - **Token MetaApi**
-4. Tunggu 1–3 menit saat pertama kali (akun di-deploy di cloud MetaApi).
-   Setelah tersambung, saldo/posisi asli akun Exness tampil dan bot trading
-   langsung ke akun tersebut. Simbol gold terdeteksi otomatis
-   (`XAUUSD`, `XAUUSDm`, `XAUUSDc`, dll. sesuai tipe akun).
+### Cara 1 — Login dari website
+
+Klik **Login Broker → Exness (MT5)** dan isi:
+
+- **Nomor akun MT5** (login Exness kamu)
+- **Password trading** (bukan password investor)
+- **Server** — misal `Exness-MT5Trial7` (demo) atau `Exness-MT5Real8`
+  (terlihat di aplikasi/email Exness)
+- **Token MetaApi** (boleh kosong jika sudah diisi di `.env`)
+
+### Cara 2 — Auto-login LIVE saat server start (.env)
+
+```bash
+cp .env.example .env   # lalu isi kredensialnya
+npm start
+```
+
+Isi `.env`:
+
+```ini
+METAAPI_TOKEN=token-metaapi-kamu
+EXNESS_LOGIN=12345678
+EXNESS_PASSWORD=password-trading
+EXNESS_SERVER=Exness-MT5Real8
+AUTO_START_BOT=1   # bot langsung trading otomatis begitu tersambung
+```
+
+Server akan langsung tersambung LIVE saat dinyalakan; dengan `AUTO_START_BOT=1`
+bot GoldScalper ikut menyala otomatis — cocok untuk dijalankan 24/5 di VPS.
+Jika auto-login gagal (token salah, server down), aplikasi tetap hidup dalam
+mode Demo dan alasannya tercatat di tab **Journal**.
+
+Koneksi pertama butuh 1–3 menit (akun di-deploy di cloud MetaApi). Setelah
+tersambung, saldo/posisi asli akun Exness tampil (badge **EXNESS LIVE**) dan
+semua order — manual maupun bot — dieksekusi ke akun tersebut. Simbol gold
+terdeteksi otomatis (`XAUUSD`, `XAUUSDm`, `XAUUSDc`, dll. sesuai tipe akun).
 
 > 💡 **Sangat disarankan** menguji bot di akun **demo Exness** (server MT5Trial)
 > dulu sebelum akun real.

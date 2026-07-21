@@ -9,7 +9,23 @@ const { MarketSimulator } = require('./simulator');
 const { ExnessBroker } = require('./exness');
 const { GoldScalperBot, DEFAULT_CONFIG } = require('./bot');
 
+loadDotEnv();
 const PORT = process.env.PORT || 3000;
+
+/** Loader .env sederhana (tanpa dependency): KEY=VALUE per baris, # untuk komentar. */
+function loadDotEnv() {
+  try {
+    const fs = require('fs');
+    const file = path.join(__dirname, '..', '.env');
+    if (!fs.existsSync(file)) return;
+    for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+      const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+      if (m && !line.trim().startsWith('#') && process.env[m[1]] === undefined) {
+        process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
+      }
+    }
+  } catch (e) { /* .env opsional */ }
+}
 
 const app = express();
 app.use(express.json());
@@ -112,25 +128,33 @@ app.get('/api/candles', (req, res) => {
  *  { mode: "demo" }
  *  { mode: "exness", login, password, server, token }
  */
+/** Hubungkan ke Exness live dan jadikan broker aktif. */
+async function connectExnessLive(creds) {
+  const ex = new ExnessBroker();
+  addJournal({ time: Date.now(), level: 'info', message: `Menghubungkan ke Exness ${creds.server} #${creds.login} via MetaApi...` });
+  await ex.connect(creds, msg => addJournal({ time: Date.now(), level: 'info', message: msg }));
+  const old = broker;
+  broker = ex;
+  mode = 'exness';
+  wireBroker(broker);
+  bot.setBroker(broker);
+  if (old instanceof MarketSimulator) old.stop();
+  else if (old && old.disconnect) safe(() => old.disconnect());
+  addJournal({ time: Date.now(), level: 'success', message: 'LIVE: login Exness berhasil. Akun siap ditradingkan.' });
+}
+
 app.post('/api/login', async (req, res) => {
   const body = req.body || {};
   try {
     if (bot.running) bot.stop('login akun baru');
 
     if (body.mode === 'exness') {
-      const ex = new ExnessBroker();
-      addJournal({ time: Date.now(), level: 'info', message: `Menghubungkan ke Exness ${body.server} #${body.login} via MetaApi...` });
-      await ex.connect(
-        { login: body.login, password: body.password, server: body.server, token: body.token },
-        msg => addJournal({ time: Date.now(), level: 'info', message: msg })
-      );
-      const old = broker;
-      broker = ex;
-      mode = 'exness';
-      wireBroker(broker);
-      bot.setBroker(broker);
-      if (old instanceof MarketSimulator) old.stop();
-      addJournal({ time: Date.now(), level: 'success', message: 'Login Exness berhasil. Akun siap ditradingkan.' });
+      await connectExnessLive({
+        login: body.login,
+        password: body.password,
+        server: body.server,
+        token: body.token || process.env.METAAPI_TOKEN
+      });
     } else {
       if (!(broker instanceof MarketSimulator)) {
         const old = broker;
@@ -206,4 +230,31 @@ app.use((err, req, res, next) => {
 server.listen(PORT, () => {
   console.log(`WebTrader 5 berjalan di http://localhost:${PORT}`);
   addJournal({ time: Date.now(), level: 'info', message: 'Server siap. Mode DEMO aktif — login Exness lewat tombol "Login Broker".' });
+  autoConnectLive();
 });
+
+/**
+ * Auto-login LIVE saat server start jika kredensial tersedia di environment
+ * (atau file .env):
+ *   METAAPI_TOKEN, EXNESS_LOGIN, EXNESS_PASSWORD, EXNESS_SERVER
+ * Opsional: AUTO_START_BOT=1 untuk langsung menyalakan bot setelah tersambung.
+ */
+async function autoConnectLive() {
+  const { METAAPI_TOKEN, EXNESS_LOGIN, EXNESS_PASSWORD, EXNESS_SERVER, AUTO_START_BOT } = process.env;
+  if (!METAAPI_TOKEN || !EXNESS_LOGIN || !EXNESS_PASSWORD || !EXNESS_SERVER) return;
+  addJournal({ time: Date.now(), level: 'info', message: 'Kredensial Exness terdeteksi di environment — mencoba auto-login LIVE...' });
+  try {
+    await connectExnessLive({
+      login: EXNESS_LOGIN,
+      password: EXNESS_PASSWORD,
+      server: EXNESS_SERVER,
+      token: METAAPI_TOKEN
+    });
+    if (AUTO_START_BOT === '1' || String(AUTO_START_BOT).toLowerCase() === 'true') {
+      bot.start();
+      addJournal({ time: Date.now(), level: 'success', message: 'AUTO_START_BOT aktif — bot GoldScalper langsung trading LIVE.' });
+    }
+  } catch (err) {
+    addJournal({ time: Date.now(), level: 'error', message: 'Auto-login LIVE gagal: ' + err.message + ' — server tetap berjalan dalam mode DEMO.' });
+  }
+}

@@ -11,10 +11,8 @@
   },
   "dependencies": {
     "express": "^4.19.2",
+    "metaapi.cloud-sdk": "^27.2.0",
     "ws": "^8.17.0"
-  },
-  "optionalDependencies": {
-    "metaapi.cloud-sdk": "^27.0.0"
   },
   "license": "MIT"
 }

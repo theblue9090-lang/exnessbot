@@ -147,12 +147,13 @@
         <label>Nomor Akun MT5 <input id="exLogin" type="text" placeholder="cth: 12345678"></label>
         <label>Password Trading <input id="exPass" type="password" placeholder="password akun MT5"></label>
         <label>Server Exness <input id="exServer" type="text" placeholder="cth: Exness-MT5Trial7 / Exness-MT5Real8"></label>
-        <label>Token MetaApi <input id="exToken" type="password" placeholder="token dari app.metaapi.cloud"></label>
+        <label>Token MetaApi <input id="exToken" type="password" placeholder="kosongkan jika sudah diisi di file .env server"></label>
         <p class="hint">
-          Exness tidak memiliki API web publik — koneksi dilakukan lewat
-          <b>MetaApi</b> (jembatan cloud ke akun MT5). Buat token gratis di
-          app.metaapi.cloud, lalu masukkan kredensial MT5 Exness kamu di atas.
-          Nama server terlihat di email pembukaan akun / aplikasi Exness.
+          Koneksi LIVE ke Exness dilakukan lewat <b>MetaApi</b> (jembatan cloud
+          resmi ke akun MT5 — Exness tidak punya API web publik). Buat token
+          gratis di app.metaapi.cloud. Nama server terlihat di email pembukaan
+          akun / aplikasi Exness. Token boleh dikosongkan bila server sudah
+          dikonfigurasi lewat file <b>.env</b>.
         </p>
       </div>
 
