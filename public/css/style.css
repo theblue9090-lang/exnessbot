@@ -305,6 +305,22 @@ input, select {
 .modal-actions button { padding: 8px 16px; border-radius: 4px; background: var(--bg3); color: var(--text); }
 .btn-primary { background: var(--buy) !important; color: #fff !important; font-weight: 600; }
 
+.ma-title { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.ma-acc {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--bg3);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+}
+.ma-acc:hover { border-color: var(--buy); }
+.ma-acc .st { float: right; font-size: 10px; color: var(--muted); }
+.ma-sep { text-align: center; color: var(--muted); font-size: 11px; margin: 8px 0 10px; }
+
 .cfg-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

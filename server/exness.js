@@ -26,8 +26,26 @@ class ExnessBroker extends EventEmitter {
     this.info = null;
   }
 
+  /** Daftar akun MT4/MT5 yang sudah terdaftar di MetaApi untuk token ini. */
+  static async listAccounts(token) {
+    const MetaApi = require('metaapi.cloud-sdk').default;
+    const api = new MetaApi(token);
+    const accounts = await api.metatraderAccountApi.getAccountsWithInfiniteScrollPagination();
+    return (accounts || []).map(a => ({
+      id: a.id,
+      name: a.name,
+      login: a.login,
+      server: a.server,
+      platform: a.platform,
+      state: a.state,
+      connectionStatus: a.connectionStatus
+    }));
+  }
+
   /**
-   * @param {{login:string, password:string, server:string, token:string}} creds
+   * @param {{token:string, accountId?:string, login?:string, password?:string, server?:string}} creds
+   *   - accountId: hubungkan ke akun yang SUDAH terdaftar di MetaApi (tanpa password MT5)
+   *   - login+password+server: cari / daftarkan akun Exness baru di MetaApi
    * @param {(msg:string)=>void} onProgress
    */
   async connect(creds, onProgress = () => {}) {
@@ -36,36 +54,48 @@ class ExnessBroker extends EventEmitter {
       MetaApi = require('metaapi.cloud-sdk').default;
     } catch (e) {
       throw new Error(
-        'SDK MetaApi belum terpasang. Jalankan "npm install metaapi.cloud-sdk" lalu restart server. ' +
+        'SDK MetaApi belum terpasang. Jalankan "npm install" lalu restart server. ' +
         '(Exness diakses lewat MetaApi karena Exness tidak punya API web publik langsung.)'
       );
     }
     if (!creds.token) throw new Error('Token MetaApi wajib diisi (buat gratis di app.metaapi.cloud).');
-    if (!creds.login || !creds.password || !creds.server) throw new Error('Login, password, dan server Exness wajib diisi.');
 
     const api = new MetaApi(creds.token);
-    onProgress('Mencari akun di MetaApi...');
     let account = null;
-    try {
-      const accounts = await api.metatraderAccountApi.getAccountsWithInfiniteScrollPagination();
-      account = accounts.find(a => String(a.login) === String(creds.login) && a.server === creds.server);
-    } catch (e) { /* lanjut buat akun baru */ }
 
-    if (!account) {
-      onProgress('Mendaftarkan akun Exness ke MetaApi...');
-      account = await api.metatraderAccountApi.createAccount({
-        name: 'Exness ' + creds.login,
-        type: 'cloud',
-        login: String(creds.login),
-        password: creds.password,
-        server: creds.server,
-        platform: 'mt5',
-        magic: 987001
-      });
+    if (creds.accountId) {
+      onProgress('Mengambil akun MetaApi ' + creds.accountId + '...');
+      account = await api.metatraderAccountApi.getAccount(creds.accountId);
+    } else {
+      if (!creds.login || !creds.password || !creds.server) {
+        throw new Error('Login, password, dan server Exness wajib diisi (atau pilih akun MetaApi yang sudah terdaftar).');
+      }
+      onProgress('Mencari akun di MetaApi...');
+      try {
+        const accounts = await api.metatraderAccountApi.getAccountsWithInfiniteScrollPagination();
+        account = accounts.find(a => String(a.login) === String(creds.login) && a.server === creds.server);
+      } catch (e) { /* lanjut buat akun baru */ }
+
+      if (!account) {
+        onProgress('Mendaftarkan akun Exness ke MetaApi...');
+        account = await api.metatraderAccountApi.createAccount({
+          name: 'Exness ' + creds.login,
+          type: 'cloud',
+          login: String(creds.login),
+          password: creds.password,
+          server: creds.server,
+          platform: 'mt5',
+          magic: 987001
+        });
+      }
     }
 
-    onProgress('Deploy akun (bisa 1-3 menit saat pertama kali)...');
-    await account.deploy();
+    if (account.state !== 'DEPLOYED') {
+      onProgress('Deploy akun (bisa 1-3 menit saat pertama kali)...');
+      await account.deploy();
+    } else {
+      onProgress('Akun sudah ter-deploy, menunggu koneksi broker...');
+    }
     await account.waitConnected();
 
     onProgress('Membuka koneksi streaming...');
@@ -103,7 +133,7 @@ class ExnessBroker extends EventEmitter {
 
     this.connected = true;
     this._pollTimer = setInterval(() => this._poll(), 500);
-    onProgress('Terhubung ke Exness: ' + creds.server + ' #' + creds.login + ' (simbol ' + this.symbol + ')');
+    onProgress('Terhubung ke akun #' + (account.login || creds.login) + ' @ ' + (account.server || creds.server) + ' (simbol ' + this.symbol + ')');
     return this;
   }
 

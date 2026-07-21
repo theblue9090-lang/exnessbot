@@ -39,6 +39,9 @@ Klik **Login Broker → Exness (MT5)** dan isi:
   (terlihat di aplikasi/email Exness)
 - **Token MetaApi** (boleh kosong jika sudah diisi di `.env`)
 
+Jika akun Exness kamu sudah pernah terdaftar di MetaApi, form login akan
+menampilkan daftarnya — cukup klik untuk langsung terhubung, tanpa password.
+
 ### Cara 2 — Auto-login LIVE saat server start (.env)
 
 ```bash
@@ -46,14 +49,22 @@ cp .env.example .env   # lalu isi kredensialnya
 npm start
 ```
 
-Isi `.env`:
+Isi `.env` minimal (jika akun **sudah terdaftar** di dashboard MetaApi — server
+mencarinya otomatis):
+
+```ini
+METAAPI_TOKEN=token-metaapi-kamu
+AUTO_START_BOT=1   # bot langsung trading otomatis begitu tersambung
+```
+
+Atau lengkap (jika akun **belum terdaftar** — server mendaftarkannya otomatis):
 
 ```ini
 METAAPI_TOKEN=token-metaapi-kamu
 EXNESS_LOGIN=12345678
 EXNESS_PASSWORD=password-trading
 EXNESS_SERVER=Exness-MT5Real8
-AUTO_START_BOT=1   # bot langsung trading otomatis begitu tersambung
+AUTO_START_BOT=1
 ```
 
 Server akan langsung tersambung LIVE saat dinyalakan; dengan `AUTO_START_BOT=1`

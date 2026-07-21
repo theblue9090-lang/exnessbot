@@ -128,10 +128,30 @@ app.get('/api/candles', (req, res) => {
  *  { mode: "demo" }
  *  { mode: "exness", login, password, server, token }
  */
+/**
+ * Daftar akun MT4/MT5 yang sudah terdaftar di MetaApi — supaya bisa langsung
+ * dipilih di form login tanpa memasukkan password MT5 lagi.
+ */
+app.get('/api/exness/accounts', async (req, res) => {
+  try {
+    const token = req.query.token || process.env.METAAPI_TOKEN;
+    if (!token) return res.json({ ok: true, accounts: [], note: 'Token MetaApi belum diisi' });
+    const accounts = await ExnessBroker.listAccounts(token);
+    res.json({ ok: true, accounts });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
 /** Hubungkan ke Exness live dan jadikan broker aktif. */
 async function connectExnessLive(creds) {
   const ex = new ExnessBroker();
-  addJournal({ time: Date.now(), level: 'info', message: `Menghubungkan ke Exness ${creds.server} #${creds.login} via MetaApi...` });
+  addJournal({
+    time: Date.now(), level: 'info',
+    message: creds.accountId
+      ? `Menghubungkan ke akun MetaApi ${creds.accountId}...`
+      : `Menghubungkan ke Exness ${creds.server} #${creds.login} via MetaApi...`
+  });
   await ex.connect(creds, msg => addJournal({ time: Date.now(), level: 'info', message: msg }));
   const old = broker;
   broker = ex;
@@ -150,6 +170,7 @@ app.post('/api/login', async (req, res) => {
 
     if (body.mode === 'exness') {
       await connectExnessLive({
+        accountId: body.accountId,
         login: body.login,
         password: body.password,
         server: body.server,
@@ -240,16 +261,40 @@ server.listen(PORT, () => {
  * Opsional: AUTO_START_BOT=1 untuk langsung menyalakan bot setelah tersambung.
  */
 async function autoConnectLive() {
-  const { METAAPI_TOKEN, EXNESS_LOGIN, EXNESS_PASSWORD, EXNESS_SERVER, AUTO_START_BOT } = process.env;
-  if (!METAAPI_TOKEN || !EXNESS_LOGIN || !EXNESS_PASSWORD || !EXNESS_SERVER) return;
-  addJournal({ time: Date.now(), level: 'info', message: 'Kredensial Exness terdeteksi di environment — mencoba auto-login LIVE...' });
+  const { METAAPI_TOKEN, EXNESS_LOGIN, EXNESS_PASSWORD, EXNESS_SERVER, METAAPI_ACCOUNT_ID, AUTO_START_BOT } = process.env;
+  if (!METAAPI_TOKEN) return;
+
   try {
-    await connectExnessLive({
-      login: EXNESS_LOGIN,
-      password: EXNESS_PASSWORD,
-      server: EXNESS_SERVER,
-      token: METAAPI_TOKEN
-    });
+    let creds = null;
+    if (METAAPI_ACCOUNT_ID) {
+      creds = { token: METAAPI_TOKEN, accountId: METAAPI_ACCOUNT_ID };
+    } else if (EXNESS_LOGIN && EXNESS_PASSWORD && EXNESS_SERVER) {
+      creds = { token: METAAPI_TOKEN, login: EXNESS_LOGIN, password: EXNESS_PASSWORD, server: EXNESS_SERVER };
+    } else {
+      // hanya token: cari akun yang sudah terdaftar di MetaApi
+      addJournal({ time: Date.now(), level: 'info', message: 'METAAPI_TOKEN terdeteksi — mencari akun yang sudah terdaftar di MetaApi...' });
+      const accounts = await ExnessBroker.listAccounts(METAAPI_TOKEN);
+      if (!accounts.length) {
+        addJournal({
+          time: Date.now(), level: 'warn',
+          message: 'Belum ada akun terdaftar di MetaApi. Isi EXNESS_LOGIN/PASSWORD/SERVER di .env atau login lewat tombol "Login Broker".'
+        });
+        return;
+      }
+      if (accounts.length > 1) {
+        addJournal({
+          time: Date.now(), level: 'warn',
+          message: `Ada ${accounts.length} akun di MetaApi: ` +
+            accounts.map(a => `#${a.login}@${a.server} (id ${a.id})`).join(', ') +
+            ' — pilih salah satu lewat tombol "Login Broker", atau set METAAPI_ACCOUNT_ID di .env.'
+        });
+        return;
+      }
+      creds = { token: METAAPI_TOKEN, accountId: accounts[0].id };
+      addJournal({ time: Date.now(), level: 'info', message: `Akun ditemukan: #${accounts[0].login} @ ${accounts[0].server} — mencoba auto-login LIVE...` });
+    }
+
+    await connectExnessLive(creds);
     if (AUTO_START_BOT === '1' || String(AUTO_START_BOT).toLowerCase() === 'true') {
       bot.start();
       addJournal({ time: Date.now(), level: 'success', message: 'AUTO_START_BOT aktif — bot GoldScalper langsung trading LIVE.' });

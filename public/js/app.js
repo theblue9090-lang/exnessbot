@@ -555,7 +555,32 @@ function updateModeBadge() {
 $('btnLogin').onclick = () => {
   $('loginErr').classList.add('hidden');
   $('loginModal').classList.remove('hidden');
+  loadMetaApiAccounts();
 };
+
+/** Ambil akun yang sudah terdaftar di MetaApi (token dari form atau .env server). */
+async function loadMetaApiAccounts() {
+  const box = $('maAccounts');
+  const list = $('maAccountList');
+  try {
+    const token = $('exToken').value.trim();
+    const data = await api('/api/exness/accounts' + (token ? '?token=' + encodeURIComponent(token) : ''));
+    if (!data.accounts || !data.accounts.length) { box.classList.add('hidden'); return; }
+    list.innerHTML = '';
+    for (const a of data.accounts) {
+      const btn = document.createElement('button');
+      btn.className = 'ma-acc';
+      btn.innerHTML = `💼 #${escapeHtml(String(a.login || ''))} @ ${escapeHtml(a.server || '')} ` +
+        `<span class="st">${escapeHtml(a.platform || '')} · ${escapeHtml(a.state || '')}</span>`;
+      btn.onclick = () => doLogin({ mode: 'exness', accountId: a.id, token: token || undefined });
+      list.appendChild(btn);
+    }
+    box.classList.remove('hidden');
+  } catch (err) {
+    box.classList.add('hidden');
+  }
+}
+$('exToken').addEventListener('change', loadMetaApiAccounts);
 $('btnCancelLogin').onclick = () => $('loginModal').classList.add('hidden');
 
 document.querySelectorAll('.ltab').forEach(t => {
@@ -568,19 +593,9 @@ document.querySelectorAll('.ltab').forEach(t => {
   };
 });
 
-$('btnDoLogin').onclick = async () => {
+async function doLogin(body) {
   const errEl = $('loginErr');
   errEl.classList.add('hidden');
-  const body = loginMode === 'exness'
-    ? {
-        mode: 'exness',
-        login: $('exLogin').value.trim(),
-        password: $('exPass').value,
-        server: $('exServer').value.trim(),
-        token: $('exToken').value.trim()
-      }
-    : { mode: 'demo' };
-
   $('btnDoLogin').disabled = true;
   $('btnDoLogin').textContent = 'Menghubungkan...';
   try {
@@ -598,6 +613,19 @@ $('btnDoLogin').onclick = async () => {
     $('btnDoLogin').disabled = false;
     $('btnDoLogin').textContent = 'Login';
   }
+}
+
+$('btnDoLogin').onclick = () => {
+  const body = loginMode === 'exness'
+    ? {
+        mode: 'exness',
+        login: $('exLogin').value.trim(),
+        password: $('exPass').value,
+        server: $('exServer').value.trim(),
+        token: $('exToken').value.trim()
+      }
+    : { mode: 'demo' };
+  doLogin(body);
 };
 
 // refresh candle penuh tiap 20 detik agar agregasi TF akurat
