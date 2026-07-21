@@ -9,7 +9,7 @@ services:
     plan: free
     buildCommand: npm install
     startCommand: npm start
-    healthCheckPath: /api/state
+    healthCheckPath: /healthz
     envVars:
       - key: APP_PASSWORD
         sync: false        # WAJIB diisi — password akses website

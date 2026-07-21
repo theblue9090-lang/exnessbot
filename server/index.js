@@ -59,6 +59,10 @@ function isAuthed(req) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
+// health check untuk hosting (Render/Railway/dll.) — harus bebas password,
+// karena platform memanggilnya tanpa login; 401 di sini membuat deploy gagal
+app.get('/healthz', (req, res) => res.json({ ok: true, uptime: process.uptime() }));
+
 app.post('/auth', (req, res) => {
   const given = String((req.body || {}).password || '');
   const a = crypto.createHmac('sha256', authSecret).update(given).digest();
