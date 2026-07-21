@@ -1,0 +1,20 @@
+{
+  "name": "exness-webtrader",
+  "version": "1.0.0",
+  "description": "Web trading platform bergaya MetaTrader 5 dengan bot scalping XAU/USD otomatis dan koneksi akun Exness (via MetaApi)",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.17.0"
+  },
+  "optionalDependencies": {
+    "metaapi.cloud-sdk": "^27.0.0"
+  },
+  "license": "MIT"
+}

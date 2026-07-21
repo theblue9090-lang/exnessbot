@@ -1,0 +1,88 @@
+# WebTrader 5 — Platform Trading XAU/USD dengan Bot Scalping Otomatis
+
+Website trading bergaya **MetaTrader 5** (dark theme) dengan:
+
+- 📈 Chart candlestick XAU/USD realtime + overlay EMA 9/21/50, crosshair, garis posisi/SL/TP
+- 👀 Market Watch, Navigator, panel Terminal (Trade / History / Journal) ala MT5
+- ⚡ One-click trading (BUY/SELL di harga bid/ask)
+- 🤖 **Bot GoldScalper** — scalping otomatis XAU/USD di timeframe **M1/M5**, langsung
+  mengeksekusi order **tanpa konfirmasi** begitu di-start
+- 🔐 **Login broker Exness** (akun MT5) melalui MetaApi, plus **mode Demo**
+  (simulator harga + paper trading, saldo virtual $10.000)
+
+---
+
+## Cara Menjalankan
+
+```bash
+npm install          # express + ws (metaapi.cloud-sdk opsional, lihat bawah)
+npm start            # server jalan di http://localhost:3000
+```
+
+Buka `http://localhost:3000`. Aplikasi langsung berjalan dalam **mode Demo** —
+klik **▶ Start Bot** dan bot langsung trading otomatis di akun demo.
+
+## Login ke Exness
+
+Exness **tidak memiliki API web publik** — akun Exness adalah akun MetaTrader 5.
+Jembatan standar untuk mengakses akun MT5 dari aplikasi web adalah
+[MetaApi](https://metaapi.cloud) (cloud API untuk MT4/MT5).
+
+1. Pasang SDK-nya (sekali saja): `npm install metaapi.cloud-sdk`
+2. Daftar gratis di [app.metaapi.cloud](https://app.metaapi.cloud) dan buat **token API**
+3. Di website, klik **Login Broker → Exness (MT5)** dan isi:
+   - **Nomor akun MT5** (login Exness kamu)
+   - **Password trading** (bukan password investor)
+   - **Server** — misal `Exness-MT5Trial7` (demo) atau `Exness-MT5Real8`
+     (terlihat di aplikasi/email Exness)
+   - **Token MetaApi**
+4. Tunggu 1–3 menit saat pertama kali (akun di-deploy di cloud MetaApi).
+   Setelah tersambung, saldo/posisi asli akun Exness tampil dan bot trading
+   langsung ke akun tersebut. Simbol gold terdeteksi otomatis
+   (`XAUUSD`, `XAUUSDm`, `XAUUSDc`, dll. sesuai tipe akun).
+
+> 💡 **Sangat disarankan** menguji bot di akun **demo Exness** (server MT5Trial)
+> dulu sebelum akun real.
+
+## Bot GoldScalper — Strategi
+
+Scalping berbasis konfluensi, evaluasi di setiap **candle close** (M1 atau M5):
+
+| Komponen | Aturan |
+|---|---|
+| Trend | EMA9 vs EMA21, harga relatif EMA50 |
+| Trigger | Fresh crossover EMA9/21 (≤3 candle) **atau** pullback ke EMA9 yang ditutup searah trend |
+| Momentum | RSI(14) 50–72 untuk BUY / 28–50 untuk SELL, body candle ≥ 25% ATR |
+| SL / TP | 1.5 × ATR(14) / 1.1 × ATR(14) — adaptif terhadap volatilitas |
+| Break-even | SL digeser ke entry (+buffer) setelah profit 0.5 × ATR |
+| Trailing stop | Mengikuti harga sejauh 0.8 × ATR setelah profit 0.8 × ATR |
+| Lot sizing | Otomatis dari **risk % per trade** (default 1% equity) terhadap jarak SL |
+| Filter | Spread maks $0.40, maks 2 posisi, cooldown 45 detik antar entry |
+| Proteksi | Auto-stop jika rugi harian ≥ 5% equity (bisa diubah), target profit harian opsional |
+
+Semua parameter bisa diubah dari tombol **⚙** di toolbar. Aktivitas bot
+(sinyal, eksekusi, trailing, proteksi) tercatat di tab **Journal**.
+
+## Struktur Proyek
+
+```
+server/
+  index.js      # HTTP + WebSocket server, REST API
+  bot.js        # bot scalping GoldScalper
+  simulator.js  # simulator pasar XAU/USD + paper broker (mode demo)
+  exness.js     # adapter akun Exness MT5 via MetaApi
+  indicators.js # EMA, RSI, ATR
+public/
+  index.html    # UI ala MetaTrader 5
+  css/style.css
+  js/app.js     # chart canvas, websocket client, kontrol bot
+```
+
+## ⚠️ Disclaimer Risiko
+
+Trading emas (XAU/USD) dengan leverage berisiko tinggi dan dapat menghabiskan
+seluruh modal. Bot ini adalah alat bantu — **bukan jaminan profit**. Kinerja di
+simulator/backtest tidak menjamin hasil di pasar nyata. Gunakan akun demo
+terlebih dahulu, pahami parameternya, dan trading dengan dana yang siap Anda
+tanggung risikonya. Anda bertanggung jawab penuh atas semua order yang
+dieksekusi bot di akun Anda.
