@@ -29,6 +29,70 @@ function loadDotEnv() {
 
 const app = express();
 app.use(express.json());
+
+// ---------- proteksi password (wajib saat di-hosting publik) ----------
+// Set APP_PASSWORD di environment/.env: seluruh web, API, dan WebSocket
+// hanya bisa diakses setelah memasukkan password tersebut.
+
+const crypto = require('crypto');
+const APP_PASSWORD = process.env.APP_PASSWORD || '';
+const AUTH_COOKIE = 'wt5auth';
+const authSecret = crypto.randomBytes(16).toString('hex');
+const authTokenValue = APP_PASSWORD
+  ? crypto.createHmac('sha256', authSecret).update(APP_PASSWORD).digest('hex')
+  : null;
+
+function parseCookies(header) {
+  const out = {};
+  for (const part of String(header || '').split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return out;
+}
+
+function isAuthed(req) {
+  if (!APP_PASSWORD) return true;
+  const val = parseCookies(req.headers.cookie)[AUTH_COOKIE] || '';
+  const a = Buffer.from(val);
+  const b = Buffer.from(authTokenValue);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+app.post('/auth', (req, res) => {
+  const given = String((req.body || {}).password || '');
+  const a = crypto.createHmac('sha256', authSecret).update(given).digest();
+  const b = crypto.createHmac('sha256', authSecret).update(APP_PASSWORD).digest();
+  if (!APP_PASSWORD || !crypto.timingSafeEqual(a, b)) {
+    return res.status(401).json({ ok: false, error: 'Password salah' });
+  }
+  const secure = req.secure || req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
+  res.setHeader('Set-Cookie',
+    `${AUTH_COOKIE}=${authTokenValue}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${30 * 86400}${secure}`);
+  res.json({ ok: true });
+});
+
+const LOCK_PAGE = `<!DOCTYPE html><html lang="id"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>WebTrader 5 — Login</title>
+<style>body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#12161f;font:14px "Segoe UI",sans-serif;color:#d5dbe8}
+.box{background:#1a1f2b;border:1px solid #2c3444;border-radius:8px;padding:28px;width:300px;text-align:center}
+.logo{background:linear-gradient(135deg,#ffb300,#ff6d00);color:#14181f;font-weight:800;padding:4px 8px;border-radius:5px}
+input{width:100%;box-sizing:border-box;margin:16px 0 10px;padding:10px;border-radius:4px;border:1px solid #2c3444;background:#12161f;color:#d5dbe8}
+button{width:100%;padding:10px;border:none;border-radius:4px;background:#2962ff;color:#fff;font-weight:600;cursor:pointer}
+.err{color:#ff8a80;font-size:12px;min-height:16px;margin-top:8px}</style></head>
+<body><form class="box" id="f"><span class="logo">WT5</span> <b>WebTrader 5</b>
+<input type="password" id="p" placeholder="Password aplikasi" autofocus>
+<button>Masuk</button><div class="err" id="e"></div></form>
+<script>document.getElementById('f').onsubmit=async ev=>{ev.preventDefault();
+const r=await fetch('/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:document.getElementById('p').value})});
+if(r.ok)location.reload();else document.getElementById('e').textContent='Password salah';};</script></body></html>`;
+
+app.use((req, res, next) => {
+  if (isAuthed(req)) return next();
+  if (req.path.startsWith('/api')) return res.status(401).json({ ok: false, error: 'Butuh login: masukkan APP_PASSWORD di halaman utama.' });
+  res.status(401).type('html').send(LOCK_PAGE);
+});
+
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 const server = http.createServer(app);
@@ -90,7 +154,8 @@ function broadcast(msg) {
   }
 }
 
-wss.on('connection', ws => {
+wss.on('connection', (ws, req) => {
+  if (!isAuthed(req)) { ws.close(4401, 'unauthorized'); return; }
   ws.send(JSON.stringify({
     type: 'init',
     mode,

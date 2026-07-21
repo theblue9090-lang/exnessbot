@@ -80,6 +80,51 @@ terdeteksi otomatis (`XAUUSD`, `XAUUSDm`, `XAUUSDc`, dll. sesuai tipe akun).
 > 💡 **Sangat disarankan** menguji bot di akun **demo Exness** (server MT5Trial)
 > dulu sebelum akun real.
 
+## Deploy ke Internet (jalankan bot lewat web)
+
+Supaya bot bisa dikendalikan dari browser mana pun (HP/laptop) tanpa
+menjalankan Node di komputer sendiri, deploy repo ini ke hosting Node.js.
+Sudah disiapkan `Dockerfile` (jalan di hosting mana pun) dan `render.yaml`
+(blueprint Render).
+
+### Render.com (paling mudah)
+
+1. Fork/push repo ini ke GitHub kamu (branch mana pun).
+2. Buka [dashboard.render.com](https://dashboard.render.com) → **New → Blueprint**
+   → pilih repo ini. Render membaca `render.yaml` otomatis.
+3. Isi environment variables saat diminta:
+   - `APP_PASSWORD` — **wajib**: password akses website (tanpa ini siapa pun
+     yang tahu URL bisa mengendalikan akunmu!)
+   - `METAAPI_TOKEN` — token MetaApi kamu
+   - (opsional) `METAAPI_ACCOUNT_ID` atau `EXNESS_LOGIN/PASSWORD/SERVER`
+4. Deploy. Setelah selesai kamu dapat URL `https://exness-webtrader-xxxx.onrender.com`
+   — buka dari mana saja, masukkan `APP_PASSWORD`, dan dashboard MT5-nya tampil.
+   Dengan `AUTO_START_BOT=1` bot langsung trading begitu service tersambung
+   ke Exness.
+
+> ⚠️ Plan **free** Render tidur setelah ±15 menit tanpa pengunjung — bot ikut
+> berhenti, dan bangun lagi (plus auto-login + auto-start bot) saat URL dibuka.
+> Untuk bot yang benar-benar jalan 24/5 gunakan plan **Starter** ($7/bln) atau
+> VPS murah + `docker run`.
+
+### Railway / Fly.io / VPS (Docker)
+
+```bash
+docker build -t exnessbot .
+docker run -d -p 3000:3000 \
+  -e APP_PASSWORD=passwordku \
+  -e METAAPI_TOKEN=token-metaapi \
+  -e AUTO_START_BOT=1 \
+  --restart unless-stopped exnessbot
+```
+
+### Keamanan saat online
+
+- `APP_PASSWORD` melindungi seluruh halaman, REST API, dan WebSocket
+  (cookie HttpOnly, perbandingan timing-safe).
+- Pakai selalu URL **https** (Render/Railway sudah otomatis).
+- Jangan pernah commit `.env` — file ini sudah di-`.gitignore`.
+
 ## Bot GoldScalper — Strategi
 
 Scalping berbasis konfluensi, evaluasi di setiap **candle close** (M1 atau M5):

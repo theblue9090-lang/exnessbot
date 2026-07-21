@@ -1,0 +1,27 @@
+# Blueprint deploy Render.com — https://render.com/docs/blueprint-spec
+# Deploy: dashboard Render -> New -> Blueprint -> pilih repo ini.
+# Catatan: plan "free" tidur setelah 15 menit tanpa pengunjung (bot ikut
+# berhenti). Untuk bot 24/5 gunakan plan "starter".
+services:
+  - type: web
+    name: exness-webtrader
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/state
+    envVars:
+      - key: APP_PASSWORD
+        sync: false        # WAJIB diisi — password akses website
+      - key: METAAPI_TOKEN
+        sync: false        # token dari app.metaapi.cloud
+      - key: METAAPI_ACCOUNT_ID
+        sync: false        # opsional, jika >1 akun terdaftar
+      - key: EXNESS_LOGIN
+        sync: false        # opsional, untuk daftar akun baru ke MetaApi
+      - key: EXNESS_PASSWORD
+        sync: false
+      - key: EXNESS_SERVER
+        sync: false
+      - key: AUTO_START_BOT
+        value: "1"         # bot langsung menyala saat service start
