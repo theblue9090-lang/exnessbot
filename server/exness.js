@@ -17,6 +17,35 @@ const { EventEmitter } = require('events');
 const TF_MINUTES = { M1: 1, M5: 5, M15: 15, M30: 30, H1: 60 };
 const SYMBOL_CANDIDATES = ['XAUUSD', 'XAUUSDm', 'XAUUSDc', 'XAUUSDz', 'GOLD'];
 
+/** Terjemahkan error MetaApi yang umum menjadi petunjuk yang bisa ditindaklanjuti. */
+function translateMetaApiError(err) {
+  const msg = String((err && err.message) || err);
+  if (/top up/i.test(msg)) {
+    return new Error(
+      'Saldo MetaApi habis. Deploy akun trading di MetaApi adalah layanan BERBAYAR: ' +
+      'buka app.metaapi.cloud → menu Billing → top up saldo, tunggu 1-2 menit, lalu login lagi di sini. ' +
+      'Akun Exness kamu sendiri sudah terdaftar dengan benar — hanya saldonya yang kurang. ' +
+      '(Pesan asli: ' + msg.slice(0, 160) + ')'
+    );
+  }
+  if (/E_AUTH|invalid (login|password)|authentication failed/i.test(msg)) {
+    return new Error(
+      'Login/password MT5 ditolak broker. Pastikan memakai PASSWORD TRADING (bukan password investor ' +
+      'dan bukan password aplikasi Exness), dan nomor akun MT5-nya benar. (Pesan asli: ' + msg.slice(0, 160) + ')'
+    );
+  }
+  if (/E_SRV|server .*(not found|unknown)|broker server/i.test(msg)) {
+    return new Error(
+      'Nama server tidak dikenal. Cek nama persisnya di aplikasi Exness (menu akun) atau email pembukaan akun — ' +
+      'contoh: Exness-MT5Trial7 atau Exness-MT5Real8, huruf besar/kecil harus sama. (Pesan asli: ' + msg.slice(0, 160) + ')'
+    );
+  }
+  if (/TooManyRequests|rate limit/i.test(msg)) {
+    return new Error('MetaApi membatasi permintaan (rate limit). Tunggu ±1 menit lalu coba lagi. (Pesan asli: ' + msg.slice(0, 160) + ')');
+  }
+  return err instanceof Error ? err : new Error(msg);
+}
+
 class ExnessBroker extends EventEmitter {
   constructor() {
     super();
@@ -49,6 +78,14 @@ class ExnessBroker extends EventEmitter {
    * @param {(msg:string)=>void} onProgress
    */
   async connect(creds, onProgress = () => {}) {
+    try {
+      return await this._connectInner(creds, onProgress);
+    } catch (err) {
+      throw translateMetaApiError(err);
+    }
+  }
+
+  async _connectInner(creds, onProgress) {
     let MetaApi;
     try {
       MetaApi = require('metaapi.cloud-sdk').default;
