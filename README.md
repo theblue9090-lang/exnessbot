@@ -22,6 +22,18 @@ npm start            # server jalan di http://localhost:3000
 Buka `http://localhost:3000`. Tanpa konfigurasi apa pun aplikasi berjalan dalam
 **mode Demo**; untuk trading **LIVE** ikuti salah satu dari dua cara di bawah.
 
+## Dua Cara Trading Live
+
+| | Web + MetaApi | EA MQL5 (folder `mql5/`) |
+|---|---|---|
+| Kontrol | dari browser mana pun | dari terminal MT5 |
+| Biaya jembatan | MetaApi berbayar (per jam deploy) | **gratis** |
+| Butuh | hosting Node + saldo MetaApi | terminal MT5 hidup (PC/VPS/VPS gratis Exness) |
+| Strategi | GoldScalper | GoldScalper (identik) |
+
+Kalau tidak mau berlangganan MetaApi, pakai **[GoldScalper EA](mql5/README.md)** —
+strategi yang sama berjalan langsung di MetaTrader 5 Exness tanpa biaya jembatan.
+
 ## Trading LIVE di Exness
 
 Exness **tidak memiliki API web publik** — akun Exness adalah akun MetaTrader 5.
