@@ -6,6 +6,37 @@
 
 const $ = id => document.getElementById(id);
 
+/**
+ * Fetch pembungkus: selalu memvalidasi respons sebelum di-parse sebagai JSON,
+ * supaya error server (halaman HTML 404/500, proxy, salah alamat) menjadi
+ * pesan yang jelas — bukan "Unexpected token ... is not valid JSON".
+ */
+async function api(url, opts) {
+  let res;
+  try {
+    res = await fetch(url, opts);
+  } catch (e) {
+    throw new Error('Tidak bisa terhubung ke server (' + e.message + '). Pastikan server berjalan: npm start');
+  }
+  const text = await res.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (e) {
+    throw new Error(
+      'Server tidak mengembalikan JSON (HTTP ' + res.status + ' di ' + url + '). ' +
+      'Pastikan website dibuka lewat server Node-nya (npm start, lalu buka http://localhost:3000) — ' +
+      'bukan membuka file HTML langsung atau lewat hosting statis.'
+    );
+  }
+  if (!res.ok || data.ok === false) throw new Error(data.error || ('HTTP ' + res.status));
+  return data;
+}
+
+function journalError(msg) {
+  addJournalLine({ time: Date.now(), level: 'error', message: msg });
+}
+
 const state = {
   tf: 'M1',
   candles: [],
@@ -21,11 +52,20 @@ const state = {
 // ---------- WebSocket ----------
 
 let ws;
+let wsWarned = false;
 function connectWs() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}/ws`);
+  ws.onopen = () => { wsWarned = false; };
   ws.onmessage = e => handleMsg(JSON.parse(e.data));
-  ws.onclose = () => setTimeout(connectWs, 1500);
+  ws.onclose = () => {
+    if (!wsWarned) {
+      wsWarned = true;
+      journalError('Koneksi realtime terputus — mencoba menyambung ulang... ' +
+        'Jika terus gagal, pastikan server berjalan (npm start) dan halaman dibuka dari alamat server tersebut.');
+    }
+    setTimeout(connectWs, 1500);
+  };
 }
 
 function handleMsg(msg) {
@@ -100,11 +140,20 @@ function applyQuote(q) {
 
 // ---------- Candles / chart ----------
 
+let lastCandleErr = null;
 async function loadCandles() {
-  const res = await fetch(`/api/candles?tf=${state.tf}&n=400`);
-  const data = await res.json();
-  state.candles = data.candles || [];
-  drawChart();
+  try {
+    const data = await api(`/api/candles?tf=${state.tf}&n=400`);
+    state.candles = data.candles || [];
+    lastCandleErr = null;
+    drawChart();
+  } catch (err) {
+    // jangan spam journal saat polling — hanya catat pesan error yang baru
+    if (err.message !== lastCandleErr) {
+      lastCandleErr = err.message;
+      journalError('Gagal memuat candle: ' + err.message);
+    }
+  }
 }
 
 function tfMs() {
@@ -352,11 +401,15 @@ function renderHistory() {
 }
 
 window.closePos = async function (id) {
-  await fetch('/api/position/close', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id })
-  });
+  try {
+    await api('/api/position/close', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id })
+    });
+  } catch (err) {
+    journalError('Gagal menutup posisi #' + id + ': ' + err.message);
+  }
 };
 
 // ---------- Journal ----------
@@ -384,13 +437,15 @@ $('btnSell').onclick = () => sendOrder('sell');
 
 async function sendOrder(side) {
   const volume = parseFloat($('volInput').value) || 0.01;
-  const res = await fetch('/api/order', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ side, volume })
-  });
-  const data = await res.json();
-  if (!data.ok) addJournalLine({ time: Date.now(), level: 'error', message: 'Order gagal: ' + data.error });
+  try {
+    await api('/api/order', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ side, volume })
+    });
+  } catch (err) {
+    journalError('Order gagal: ' + err.message);
+  }
 }
 
 // ---------- Timeframe & tab ----------
@@ -430,16 +485,26 @@ function updateBotUi() {
 
 $('btnBot').onclick = async () => {
   const url = state.bot.running ? '/api/bot/stop' : '/api/bot/start';
-  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-  const data = await res.json();
-  if (data.ok) { state.bot = data.bot; updateBotUi(); }
+  try {
+    const data = await api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    state.bot = data.bot;
+    updateBotUi();
+  } catch (err) {
+    journalError('Bot: ' + err.message);
+  }
 };
 
 // modal konfigurasi bot
 $('btnBotCfg').onclick = async () => {
-  const cfg = state.bot.config && state.bot.config.timeframe
-    ? state.bot.config
-    : await (await fetch('/api/bot/defaults')).json();
+  let cfg = state.bot.config && state.bot.config.timeframe ? state.bot.config : null;
+  if (!cfg) {
+    try {
+      cfg = await api('/api/bot/defaults');
+    } catch (err) {
+      journalError('Gagal memuat konfigurasi bot: ' + err.message);
+      return;
+    }
+  }
   $('cfgTf').value = cfg.timeframe;
   $('cfgRisk').value = cfg.riskPercent;
   $('cfgMaxPos').value = cfg.maxPositions;
@@ -466,11 +531,14 @@ $('btnSaveCfg').onclick = async () => {
     maxDailyLossPct: $('cfgDD').value,
     dailyProfitTargetPct: $('cfgTarget').value
   };
-  const res = await fetch('/api/bot/config', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-  });
-  const data = await res.json();
-  if (data.ok) state.bot = data.bot;
+  try {
+    const data = await api('/api/bot/config', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    state.bot = data.bot;
+  } catch (err) {
+    journalError('Gagal menyimpan konfigurasi: ' + err.message);
+  }
   $('botModal').classList.add('hidden');
 };
 
@@ -516,11 +584,9 @@ $('btnDoLogin').onclick = async () => {
   $('btnDoLogin').disabled = true;
   $('btnDoLogin').textContent = 'Menghubungkan...';
   try {
-    const res = await fetch('/api/login', {
+    const data = await api('/api/login', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
     });
-    const data = await res.json();
-    if (!data.ok) throw new Error(data.error || 'Login gagal');
     state.mode = data.mode;
     updateModeBadge();
     $('loginModal').classList.add('hidden');

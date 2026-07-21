@@ -193,6 +193,16 @@ app.post('/api/bot/config', (req, res) => {
 
 app.get('/api/bot/defaults', (req, res) => res.json(DEFAULT_CONFIG));
 
+// endpoint /api yang tidak dikenal -> selalu balas JSON, bukan halaman HTML 404
+app.use('/api', (req, res) => {
+  res.status(404).json({ ok: false, error: 'Endpoint tidak ditemukan: ' + req.originalUrl });
+});
+
+// error handler (mis. body JSON rusak) -> balas JSON, bukan halaman HTML error
+app.use((err, req, res, next) => {
+  res.status(err.status || 500).json({ ok: false, error: err.message || 'Internal server error' });
+});
+
 server.listen(PORT, () => {
   console.log(`WebTrader 5 berjalan di http://localhost:${PORT}`);
   addJournal({ time: Date.now(), level: 'info', message: 'Server siap. Mode DEMO aktif — login Exness lewat tombol "Login Broker".' });
