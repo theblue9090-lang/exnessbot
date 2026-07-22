@@ -506,8 +506,10 @@ $('btnBotCfg').onclick = async () => {
     }
   }
   $('cfgTf').value = cfg.timeframe;
+  $('cfgAggressive').checked = !!cfg.aggressive;
   $('cfgRisk').value = cfg.riskPercent;
   $('cfgMaxPos').value = cfg.maxPositions;
+  $('cfgMinMargin').value = cfg.minFreeMarginPct;
   $('cfgMaxLot').value = cfg.maxLot;
   $('cfgSl').value = cfg.slAtr;
   $('cfgTp').value = cfg.tpAtr;
@@ -521,8 +523,10 @@ $('btnCloseCfg').onclick = () => $('botModal').classList.add('hidden');
 $('btnSaveCfg').onclick = async () => {
   const body = {
     timeframe: $('cfgTf').value,
+    aggressive: $('cfgAggressive').checked,
     riskPercent: $('cfgRisk').value,
     maxPositions: $('cfgMaxPos').value,
+    minFreeMarginPct: $('cfgMinMargin').value,
     maxLot: $('cfgMaxLot').value,
     slAtr: $('cfgSl').value,
     tpAtr: $('cfgTp').value,

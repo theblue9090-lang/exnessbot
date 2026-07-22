@@ -30,13 +30,15 @@ const { CONTRACT_SIZE } = require('./simulator');
 const DEFAULT_CONFIG = {
   symbol: 'XAUUSD',
   timeframe: 'M1',        // M1 atau M5
+  aggressive: false,      // true = filter longgar, entry jauh lebih sering di M1
   riskPercent: 1.0,       // % equity yang dirisikokan per trade
   maxLot: 2.0,
   minLot: 0.01,
-  maxPositions: 2,
+  maxPositions: 2,        // 0 = tanpa batas (dibatasi hanya oleh margin bebas)
+  minFreeMarginPct: 20,   // berhenti buka posisi baru bila free margin < % equity ini
   maxSpread: 0.4,         // USD
-  slAtr: 1.5,
-  tpAtr: 1.1,
+  slAtr: 1.5,             // SL = slAtr x ATR
+  tpAtr: 1.1,             // TP = tpAtr x ATR
   breakEvenAtr: 0.5,
   trailStartAtr: 0.8,
   trailAtr: 0.8,
@@ -67,9 +69,14 @@ class GoldScalperBot extends EventEmitter {
 
   updateConfig(cfg = {}) {
     for (const k of Object.keys(cfg)) {
-      if (k in DEFAULT_CONFIG) {
-        const v = k === 'symbol' || k === 'timeframe' ? cfg[k] : Number(cfg[k]);
-        if (v !== undefined && v !== null && !(typeof v === 'number' && isNaN(v))) this.config[k] = v;
+      if (!(k in DEFAULT_CONFIG)) continue;
+      if (k === 'symbol' || k === 'timeframe') {
+        if (cfg[k]) this.config[k] = cfg[k];
+      } else if (k === 'aggressive') {
+        this.config[k] = cfg[k] === true || cfg[k] === 'true' || cfg[k] === 1 || cfg[k] === '1';
+      } else {
+        const v = Number(cfg[k]);
+        if (!isNaN(v)) this.config[k] = v;
       }
     }
     this._log('info', 'Konfigurasi diperbarui: ' + JSON.stringify(this.config));
@@ -183,19 +190,38 @@ class GoldScalperBot extends EventEmitter {
     const now = Date.now();
     if ((now - this.lastEntryAt) / 1000 < cfg.cooldownSec) return;
 
+    // batas jumlah posisi: 0 = tak terbatas (dijaga oleh free margin)
     const botPositions = this.broker.getPositions().filter(p => String(p.comment || '').includes('GoldScalper'));
-    if (botPositions.length >= cfg.maxPositions) return;
+    if (cfg.maxPositions > 0 && botPositions.length >= cfg.maxPositions) return;
+
+    // penjaga margin: berhenti buka posisi baru bila margin bebas menipis,
+    // supaya order tidak ditolak broker (yang membuat bot "seolah macet")
+    const acc = this.broker.getAccountInfo();
+    if (cfg.minFreeMarginPct > 0 && acc.equity > 0) {
+      const freePct = (acc.freeMargin / acc.equity) * 100;
+      if (isFinite(freePct) && freePct < cfg.minFreeMarginPct) {
+        if (now - (this._lastMarginWarn || 0) > 60000) {
+          this._lastMarginWarn = now;
+          this._log('warn', `Margin bebas ${freePct.toFixed(0)}% < ${cfg.minFreeMarginPct}% — jeda buka posisi baru sampai margin pulih.`);
+        }
+        return;
+      }
+    }
 
     const q = this.broker.getQuote();
+    if (!q || !q.bid) return;
     if (q.spread > cfg.maxSpread) return;
 
-    const candles = this.broker.getCandles(cfg.timeframe, 220);
-    if (candles.length < 80) return;
+    // warmup adaptif: mode agresif butuh lebih sedikit candle -> live bisa mulai
+    // trading jauh lebih cepat (sebelumnya butuh 80 candle = ~80 menit di M1)
+    const minBars = cfg.aggressive ? 30 : 80;
+    const candles = this.broker.getCandles(cfg.timeframe, 260);
+    if (candles.length < minBars) return;
     const closed = candles.slice(0, -1); // hanya candle yang sudah close
     const lastCandle = closed[closed.length - 1];
     if (this.lastSignalCandle === lastCandle.time) return; // satu evaluasi per candle
 
-    const signal = this._computeSignal(closed);
+    const signal = cfg.aggressive ? this._computeSignalAggressive(closed) : this._computeSignal(closed);
     this.lastSignalCandle = lastCandle.time;
     if (!signal) return;
 
@@ -206,7 +232,6 @@ class GoldScalperBot extends EventEmitter {
     const sl = round2(side === 'buy' ? entry - slDist : entry + slDist);
     const tp = round2(side === 'buy' ? entry + tpDist : entry - tpDist);
 
-    const acc = this.broker.getAccountInfo();
     const riskUsd = acc.equity * (cfg.riskPercent / 100);
     let volume = riskUsd / (slDist * CONTRACT_SIZE);
     volume = Math.max(cfg.minLot, Math.min(cfg.maxLot, Math.floor(volume * 100) / 100));
@@ -255,6 +280,45 @@ class GoldScalperBot extends EventEmitter {
     }
     if (bearTrend && (crossedDown || pullbackDown) && r < 50 && r > 28 && -body > minBody) {
       return { side: 'sell', atrVal: a, reason: crossedDown ? 'EMA9 cross di bawah EMA21 + RSI ' + r.toFixed(1) : 'pullback EMA9 dalam downtrend + RSI ' + r.toFixed(1) };
+    }
+    return null;
+  }
+
+  /**
+   * Sinyal AGRESIF untuk M1: filter jauh lebih longgar sehingga entry sering.
+   * Cukup arah EMA cepat (EMA5 vs EMA13) + konfirmasi momentum candle terakhir,
+   * tanpa syarat crossover fresh / EMA50 / body minimal ketat.
+   *
+   * CATATAN JUJUR: lebih sering entry != lebih akurat. Filter yang dilonggarkan
+   * menaikkan frekuensi tapi menurunkan kualitas rata-rata sinyal. Gunakan
+   * bersama SL/TP dan manajemen risiko, bukan sebagai jaminan profit.
+   */
+  _computeSignalAggressive(closed) {
+    const closes = closed.map(c => c.close);
+    const eFast = emaSeries(closes, 5);
+    const eSlow = emaSeries(closes, 13);
+    const n = closes.length - 1;
+    const ef = eFast[n], es = eSlow[n];
+    if (ef === null || es === null) return null;
+
+    const a = atr(closed, 14);
+    if (!a || a <= 0) return null;
+    const r = rsi(closes.slice(-30), 14);
+    if (r === null) return null;
+
+    const c = closed[n];
+    const prev = closed[n - 1];
+    const body = c.close - c.open;
+
+    // arah dari EMA cepat + candle terakhir searah + tidak di kondisi ekstrem RSI
+    const upSlope = ef > es && eFast[n - 1] !== null && ef >= eFast[n - 1];
+    const downSlope = ef < es && eFast[n - 1] !== null && ef <= eFast[n - 1];
+
+    if (upSlope && c.close > c.open && c.close >= prev.high - 0.1 * a && r < 78) {
+      return { side: 'buy', atrVal: a, reason: 'agresif M1: EMA5>EMA13 naik + candle bullish (RSI ' + r.toFixed(0) + ')' };
+    }
+    if (downSlope && c.close < c.open && c.close <= prev.low + 0.1 * a && r > 22) {
+      return { side: 'sell', atrVal: a, reason: 'agresif M1: EMA5<EMA13 turun + candle bearish (RSI ' + r.toFixed(0) + ')' };
     }
     return null;
   }

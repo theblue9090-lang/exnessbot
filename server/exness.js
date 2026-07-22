@@ -158,14 +158,28 @@ class ExnessBroker extends EventEmitter {
 
     onProgress('Mengambil riwayat candle M1...');
     try {
-      const candles = await account.getHistoricalCandles(this.symbol, '1m', undefined, 1000);
-      this.m1 = (candles || []).map(c => ({
-        time: new Date(c.time).getTime(),
-        open: c.open, high: c.high, low: c.low, close: c.close,
-        volume: c.tickVolume || c.volume || 0
-      }));
+      // ambil bertahap mundur ke belakang supaya indikator (EMA50/warmup) langsung siap
+      const collected = [];
+      let before = undefined;
+      for (let page = 0; page < 4; page++) {
+        const batch = await account.getHistoricalCandles(this.symbol, '1m', before, 300);
+        if (!batch || !batch.length) break;
+        for (const c of batch) collected.push(c);
+        before = new Date(new Date(batch[0].time).getTime() - 60000);
+        if (batch.length < 300) break;
+      }
+      const seen = new Set();
+      this.m1 = collected
+        .map(c => ({
+          time: new Date(c.time).getTime(),
+          open: c.open, high: c.high, low: c.low, close: c.close,
+          volume: c.tickVolume || c.volume || 0
+        }))
+        .filter(c => (seen.has(c.time) ? false : (seen.add(c.time), true)))
+        .sort((x, y) => x.time - y.time);
+      onProgress('Riwayat candle M1 dimuat: ' + this.m1.length + ' bar.');
     } catch (e) {
-      onProgress('Gagal ambil riwayat candle (' + e.message + '), candle dibangun dari tick.');
+      onProgress('Gagal ambil riwayat candle (' + e.message + '), candle dibangun dari tick (mode agresif tetap bisa mulai ~30 menit).');
     }
 
     this.connected = true;

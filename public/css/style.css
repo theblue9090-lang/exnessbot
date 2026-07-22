@@ -327,3 +327,16 @@ input, select {
   gap: 8px 12px;
   margin-bottom: 8px;
 }
+.cfg-agg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 179, 0, .1);
+  border: 1px solid rgba(255, 179, 0, .35);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+.cfg-agg input { width: auto; margin: 0; }
