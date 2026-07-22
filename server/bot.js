@@ -128,9 +128,10 @@ class GoldScalperBot extends EventEmitter {
     if (!this.running) return;
     try {
       this._resetDayIfNeeded();
-      await this._checkMoneyStops();   // tutup ±nominal IDR (dicek tiap tick)
+      await this._protectPositions();  // break-even + penegakan SL/TP (semua mode)
+      await this._checkMoneyStops();   // tutup ±nominal IDR (mode nominal)
       if (!this._checkDailyGuards()) return;
-      await this._managePositions();
+      await this._managePositions();   // trailing ATR (mode ATR)
       await this._maybeEnter();
     } catch (err) {
       this._log('error', 'Error bot: ' + err.message);
@@ -240,6 +241,57 @@ class GoldScalperBot extends EventEmitter {
       if (newSl !== null && (p.sl === null || Math.abs(newSl - p.sl) > 0.01)) {
         await this.broker.modifyPosition(p.id, round2(newSl), p.tp);
         this._log('info', `Trailing #${p.id}: SL -> ${round2(newSl)}`);
+      }
+    }
+  }
+
+  /**
+   * Proteksi universal (semua mode, dicek TIAP TICK):
+   *  1. Break-even: begitu posisi profit >= 40% jarak ke TP, SL digeser ke
+   *     titik entry (+buffer spread) — posisi tidak bisa lagi berbalik rugi.
+   *  2. Penegakan SL/TP sisi-bot: bila harga (feed kita) menyentuh level SL/TP,
+   *     posisi langsung ditutup — cadangan bila SL/TP broker telat/tak terpasang,
+   *     mengurangi exit yang "meleset".
+   */
+  async _protectPositions() {
+    const q = this.broker.getQuote();
+    if (!q || !q.bid) return;
+    const spread = q.spread || 0.05;
+    const nowTs = Date.now();
+
+    for (const p of this.broker.getPositions()) {
+      if (!p.comment || !String(p.comment).includes('GoldScalper')) continue;
+      if (p.pending) continue;                         // jangan tutup posisi yg blm sinkron
+      const dir = p.side === 'buy' ? 1 : -1;
+      const cur = p.side === 'buy' ? q.bid : q.ask;
+
+      // 1) penegakan level: tutup segera bila harga sudah menyentuh TP/SL
+      if (p.tp && (cur - p.tp) * dir >= 0) {
+        await this.broker.closePosition(p.id, 'tp');
+        this._log('success', `TP tersentuh #${p.id} @ ${cur} — posisi ditutup.`);
+        continue;
+      }
+      if (p.sl && (p.sl - cur) * dir >= 0) {
+        await this.broker.closePosition(p.id, 'sl');
+        const profitable = (cur - p.openPrice) * dir >= 0; // SL di atas entry (break-even/profit)?
+        this._log(profitable ? 'success' : 'error', `SL tersentuh #${p.id} @ ${cur} — posisi ditutup${profitable ? ' (terkunci aman)' : ''}.`);
+        continue;
+      }
+
+      // 2) break-even setelah profit menembus 40% jarak ke TP (grace 2s dulu)
+      if (nowTs - (p.openTime || 0) < 2000) continue;
+      if (p.tp) {
+        const distTP = Math.abs(p.tp - p.openPrice);
+        const gain = (cur - p.openPrice) * dir;
+        if (distTP > 0 && gain >= 0.4 * distTP) {
+          const beSl = round2(p.openPrice + dir * (spread + 0.02));
+          if (p.sl === null || (beSl - p.sl) * dir > 0.001) {
+            try {
+              await this.broker.modifyPosition(p.id, beSl, p.tp);
+              this._log('info', `Break-even #${p.id}: profit terkunci — SL digeser ke ${beSl} (aman dari rugi).`);
+            } catch (e) { /* broker menolak SL terlalu dekat; penegakan level tetap menjaga */ }
+          }
+        }
       }
     }
   }
