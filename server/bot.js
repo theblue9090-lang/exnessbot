@@ -278,17 +278,22 @@ class GoldScalperBot extends EventEmitter {
         continue;
       }
 
-      // 2) break-even setelah profit menembus 40% jarak ke TP (grace 2s dulu)
+      // 2) break-even RATCHET: setelah profit menembus 40% jarak ke TP, SL
+      //    mengunci profit dan HANYA bergeser ke arah profit lebih tinggi —
+      //    tidak pernah mundur meski harga berbalik (grace 2s dulu).
       if (nowTs - (p.openTime || 0) < 2000) continue;
       if (p.tp) {
         const distTP = Math.abs(p.tp - p.openPrice);
         const gain = (cur - p.openPrice) * dir;
         if (distTP > 0 && gain >= 0.4 * distTP) {
-          const beSl = round2(p.openPrice + dir * (spread + 0.02));
-          if (p.sl === null || (beSl - p.sl) * dir > 0.001) {
+          // profit yang dikunci = kelebihan di atas ambang 0.4*TP, minimal break-even
+          const lockedProfit = Math.max(spread + 0.02, gain - 0.4 * distTP);
+          const newSl = round2(p.openPrice + dir * lockedProfit);
+          // ratchet: hanya geser bila LEBIH menguntungkan dari SL sekarang
+          if (p.sl === null || (newSl - p.sl) * dir > 0.001) {
             try {
-              await this.broker.modifyPosition(p.id, beSl, p.tp);
-              this._log('info', `Break-even #${p.id}: profit terkunci — SL digeser ke ${beSl} (aman dari rugi).`);
+              await this.broker.modifyPosition(p.id, newSl, p.tp);
+              this._log('info', `Break-even naik #${p.id}: SL -> ${newSl} (kunci profit, hanya bergerak naik).`);
             } catch (e) { /* broker menolak SL terlalu dekat; penegakan level tetap menjaga */ }
           }
         }
