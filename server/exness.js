@@ -53,6 +53,8 @@ class ExnessBroker extends EventEmitter {
     this.symbol = 'XAUUSD';
     this.m1 = [];
     this.info = null;
+    this._optimistic = new Map();  // posisi baru yg blm tersinkron dari MetaApi
+    this._closing = new Set();     // id yg sedang ditutup (sembunyikan segera)
   }
 
   /** Daftar akun MT4/MT5 yang sudah terdaftar di MetaApi untuk token ini. */
@@ -264,8 +266,8 @@ class ExnessBroker extends EventEmitter {
   }
 
   getPositions() {
-    return (this.state.positions || [])
-      .filter(p => p.symbol === this.symbol)
+    const real = (this.state.positions || [])
+      .filter(p => p.symbol === this.symbol && !this._closing.has(String(p.id)))
       .map(p => ({
         id: String(p.id),
         symbol: p.symbol,
@@ -279,6 +281,24 @@ class ExnessBroker extends EventEmitter {
         currentPrice: p.currentPrice,
         profit: Math.round((p.profit || 0) * 100) / 100
       }));
+
+    // gabungkan posisi optimistik (baru dibuka, MetaApi belum sinkron) agar UI
+    // langsung menampilkannya tanpa menunggu streaming — hilang otomatis begitu
+    // posisi asli muncul atau setelah kadaluarsa.
+    const realIds = new Set(real.map(p => p.id));
+    const q = this.getQuote();
+    const now = Date.now();
+    for (const [id, o] of this._optimistic) {
+      if (realIds.has(id) || this._closing.has(id) || now - o.openTime > 20000) {
+        this._optimistic.delete(id);
+        continue;
+      }
+      const dir = o.side === 'buy' ? 1 : -1;
+      const cur = o.side === 'buy' ? q.bid : q.ask;
+      const profit = (cur - o.openPrice) * dir * o.volume * 100; // gold: 1 lot=100oz
+      real.push({ ...o, currentPrice: cur, profit: Math.round(profit * 100) / 100, pending: true });
+    }
+    return real;
   }
 
   getHistory() {
@@ -309,9 +329,9 @@ class ExnessBroker extends EventEmitter {
     const res = side === 'buy'
       ? await this.connection.createMarketBuyOrder(this.symbol, volume, sl || undefined, tp || undefined, opts)
       : await this.connection.createMarketSellOrder(this.symbol, volume, sl || undefined, tp || undefined, opts);
-    this.emit('trade', { event: 'open', position: { id: String(res.positionId || res.orderId), side, volume, comment } });
-    return {
-      id: String(res.positionId || res.orderId),
+    const id = String(res.positionId || res.orderId);
+    const pos = {
+      id,
       symbol: this.symbol,
       side, volume,
       openPrice: res.price || this.getQuote()[side === 'buy' ? 'ask' : 'bid'],
@@ -319,16 +339,30 @@ class ExnessBroker extends EventEmitter {
       sl: sl || null, tp: tp || null,
       comment
     };
+    // tampilkan segera di UI (optimistik) sampai MetaApi menyinkronkan posisi asli
+    this._optimistic.set(id, pos);
+    this.emit('trade', { event: 'open', position: pos });
+    return pos;
   }
 
   async modifyPosition(id, sl, tp) {
     await this.connection.modifyPosition(id, sl || undefined, tp || undefined);
+    const o = this._optimistic.get(String(id));
+    if (o) { o.sl = sl || null; o.tp = tp || null; }
     return { id, sl, tp };
   }
 
   async closePosition(id) {
-    await this.connection.closePosition(id);
-    return { id };
+    const sid = String(id);
+    this._closing.add(sid);       // sembunyikan dari UI seketika
+    this._optimistic.delete(sid);
+    try {
+      await this.connection.closePosition(sid);
+    } finally {
+      // biarkan tersembunyi beberapa detik agar streaming sempat sinkron, lalu bersihkan
+      setTimeout(() => this._closing.delete(sid), 8000);
+    }
+    return { id: sid };
   }
 }
 

@@ -147,7 +147,7 @@ setInterval(() => {
       botRunning: bot.running
     });
   } catch (e) { /* broker sedang ganti */ }
-}, 1000);
+}, 500);
 
 // ---------- websocket ----------
 

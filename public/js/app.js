@@ -370,7 +370,7 @@ function renderPositions() {
     <tr>
       <td>${p.id}</td>
       <td>${fmtTime(p.openTime)}</td>
-      <td class="type-${p.side}">${p.side.toUpperCase()}${(p.comment || '').includes('GoldScalper') ? ' 🤖' : ''}</td>
+      <td class="type-${p.side}">${p.side.toUpperCase()}${(p.comment || '').includes('GoldScalper') ? ' 🤖' : ''}${p.pending ? ' ⏳' : ''}</td>
       <td>${fmt(p.volume)}</td>
       <td>${fmt(p.openPrice)}</td>
       <td>${fmt(p.sl)}</td>
