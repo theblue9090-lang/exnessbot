@@ -183,7 +183,7 @@ class ExnessBroker extends EventEmitter {
     }
 
     this.connected = true;
-    this._pollTimer = setInterval(() => this._poll(), 500);
+    this._pollTimer = setInterval(() => this._poll(), 200);
     onProgress('Terhubung ke akun #' + (account.login || creds.login) + ' @ ' + (account.server || creds.server) + ' (simbol ' + this.symbol + ')');
     return this;
   }

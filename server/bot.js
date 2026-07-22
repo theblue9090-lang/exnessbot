@@ -43,6 +43,7 @@ const DEFAULT_CONFIG = {
   useMoneyStops: false,   // true = tutup posisi pada nominal rupiah tetap (bukan ATR)
   tpIdr: 20000,           // tutup posisi bila profit >= nominal IDR ini
   slIdr: 20000,           // tutup posisi bila rugi >= nominal IDR ini
+  breakEvenIdr: 10000,    // bila profit >= IDR ini, geser SL ke entry (0 = off)
   usdIdrRate: 16000,      // kurs USD->IDR utk konversi (P/L broker dlm USD)
   breakEvenAtr: 0.5,
   trailStartAtr: 0.8,
@@ -161,22 +162,44 @@ class GoldScalperBot extends EventEmitter {
   }
 
   /**
-   * Tutup posisi bila P/L menyentuh nominal rupiah (dicek tiap tick).
-   * P/L broker dalam USD -> dikonversi ke IDR dgn usdIdrRate.
+   * Tutup posisi bila P/L menyentuh nominal rupiah + geser SL ke break-even.
+   * Dicek TIAP TICK berdasarkan P/L broker (USD -> IDR via usdIdrRate) agar
+   * exit akurat, tidak bergantung pembulatan harga SL/TP di sisi broker.
    */
   async _checkMoneyStops() {
     const cfg = this.config;
     if (!cfg.useMoneyStops) return;
     const rate = cfg.usdIdrRate > 0 ? cfg.usdIdrRate : 16000;
+    const q = this.broker.getQuote();
+    const spread = q && q.spread ? q.spread : 0.05;
+
     for (const p of this.broker.getPositions()) {
       if (!p.comment || !String(p.comment).includes('GoldScalper')) continue;
       const plIdr = (p.profit || 0) * rate;
+
+      // exit nominal — pengecekan utama, presisi ke P/L nyata
       if (cfg.tpIdr > 0 && plIdr >= cfg.tpIdr) {
         await this.broker.closePosition(p.id, 'tp-idr');
         this._log('success', `TP nominal tercapai #${p.id}: +${Math.round(plIdr).toLocaleString('id-ID')} IDR — posisi ditutup.`);
-      } else if (cfg.slIdr > 0 && plIdr <= -cfg.slIdr) {
+        continue;
+      }
+      if (cfg.slIdr > 0 && plIdr <= -cfg.slIdr) {
         await this.broker.closePosition(p.id, 'sl-idr');
         this._log('error', `SL nominal tersentuh #${p.id}: ${Math.round(plIdr).toLocaleString('id-ID')} IDR — posisi ditutup.`);
+        continue;
+      }
+
+      // break-even: begitu profit >= breakEvenIdr, geser SL ke entry (+buffer spread)
+      if (cfg.breakEvenIdr > 0 && plIdr >= cfg.breakEvenIdr) {
+        const dir = p.side === 'buy' ? 1 : -1;
+        const beSl = round2(p.openPrice + dir * (spread + 0.02)); // kunci ~0, tutup biaya spread
+        // hanya geser bila SL belum di BE atau masih lebih buruk dari BE
+        if (p.sl === null || (beSl - p.sl) * dir > 0.001) {
+          try {
+            await this.broker.modifyPosition(p.id, beSl, p.tp);
+            this._log('info', `Break-even #${p.id}: profit +${Math.round(plIdr).toLocaleString('id-ID')} IDR — SL digeser ke ${beSl} (aman dari rugi).`);
+          } catch (e) { /* broker mungkin menolak SL terlalu dekat; monitor tick tetap menjaga */ }
+        }
       }
     }
   }
@@ -287,11 +310,15 @@ class GoldScalperBot extends EventEmitter {
     if (cfg.useMoneyStops) {
       const rate = cfg.usdIdrRate > 0 ? cfg.usdIdrRate : 16000;
       const perPrice = volume * CONTRACT_SIZE;           // USD per 1.0 pergerakan harga
-      const tpDistP = (cfg.tpIdr / rate) / perPrice;
-      const slDistP = (cfg.slIdr / rate) / perPrice;
+      // SL/TP broker dipasang sedikit lebih LEBAR (1.3x) sebagai jaring pengaman
+      // saja; penutupan presisi di ±IDR dilakukan pemantau tick, sehingga tidak
+      // "meleset" akibat pembulatan harga di sisi broker.
+      const SAFETY = 1.3;
+      const tpDistP = (cfg.tpIdr / rate) / perPrice * SAFETY;
+      const slDistP = (cfg.slIdr / rate) / perPrice * SAFETY;
       sl = cfg.slIdr > 0 ? round2(side === 'buy' ? entry - slDistP : entry + slDistP) : null;
       tp = cfg.tpIdr > 0 ? round2(side === 'buy' ? entry + tpDistP : entry - tpDistP) : null;
-      exitInfo = `SL/TP ±IDR (${cfg.slIdr.toLocaleString('id-ID')}/${cfg.tpIdr.toLocaleString('id-ID')}) @ kurs ${rate}`;
+      exitInfo = `exit ±IDR (${cfg.slIdr.toLocaleString('id-ID')}/${cfg.tpIdr.toLocaleString('id-ID')}) @ kurs ${rate}, BE ${cfg.breakEvenIdr.toLocaleString('id-ID')}`;
     } else {
       const tpDist = cfg.tpAtr * atrVal;
       sl = round2(side === 'buy' ? entry - slDist : entry + slDist);

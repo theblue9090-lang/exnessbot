@@ -522,6 +522,7 @@ $('btnBotCfg').onclick = async () => {
   $('cfgMoney').checked = !!cfg.useMoneyStops;
   $('cfgTpIdr').value = cfg.tpIdr;
   $('cfgSlIdr').value = cfg.slIdr;
+  $('cfgBeIdr').value = cfg.breakEvenIdr;
   $('cfgRate').value = cfg.usdIdrRate;
   $('botModal').classList.remove('hidden');
 };
@@ -545,6 +546,7 @@ $('btnSaveCfg').onclick = async () => {
     useMoneyStops: $('cfgMoney').checked,
     tpIdr: $('cfgTpIdr').value,
     slIdr: $('cfgSlIdr').value,
+    breakEvenIdr: $('cfgBeIdr').value,
     usdIdrRate: $('cfgRate').value
   };
   try {
