@@ -146,7 +146,7 @@ Scalping berbasis konfluensi, evaluasi di setiap **candle close** (M1 atau M5):
 | Trend | EMA9 vs EMA21, harga relatif EMA50 |
 | Trigger | Fresh crossover EMA9/21 (≤3 candle) **atau** pullback ke EMA9 yang ditutup searah trend |
 | Momentum | RSI(14) 50–72 untuk BUY / 28–50 untuk SELL, body candle ≥ 25% ATR |
-| SL / TP | 1.5 × ATR(14) / 1.5 × ATR(14) — jarak sama (risk:reward 1:1), adaptif volatilitas |
+| SL / TP (default) | **Nominal rupiah tetap 30.000 : 30.000 IDR**, lot tetap 0.01, break-even di +10.000 IDR (tanpa ATR). Mode ATR (1.5×ATR : 1.5×ATR) tersedia bila "Tutup posisi pada nominal IDR" dimatikan |
 | Break-even | SL digeser ke entry (+buffer) setelah profit 0.5 × ATR |
 | Trailing stop | Mengikuti harga sejauh 0.8 × ATR setelah profit 0.8 × ATR |
 | Lot sizing | Otomatis dari **risk % per trade** (default 1% equity) terhadap jarak SL |

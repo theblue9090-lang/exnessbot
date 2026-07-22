@@ -520,6 +520,7 @@ $('btnBotCfg').onclick = async () => {
   $('cfgDD').value = cfg.maxDailyLossPct;
   $('cfgTarget').value = cfg.dailyProfitTargetPct;
   $('cfgMoney').checked = !!cfg.useMoneyStops;
+  $('cfgFixedLot').value = cfg.fixedLot;
   $('cfgTpIdr').value = cfg.tpIdr;
   $('cfgSlIdr').value = cfg.slIdr;
   $('cfgBeIdr').value = cfg.breakEvenIdr;
@@ -544,6 +545,7 @@ $('btnSaveCfg').onclick = async () => {
     maxDailyLossPct: $('cfgDD').value,
     dailyProfitTargetPct: $('cfgTarget').value,
     useMoneyStops: $('cfgMoney').checked,
+    fixedLot: $('cfgFixedLot').value,
     tpIdr: $('cfgTpIdr').value,
     slIdr: $('cfgSlIdr').value,
     breakEvenIdr: $('cfgBeIdr').value,

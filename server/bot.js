@@ -32,17 +32,18 @@ const DEFAULT_CONFIG = {
   timeframe: 'M1',        // M1 atau M5
   aggressive: false,      // true = filter longgar, entry jauh lebih sering di M1
   entryMode: 'signal',    // 'signal' | 'candleOpen' (entry tiap pembukaan candle baru)
-  riskPercent: 1.0,       // % equity yang dirisikokan per trade
+  riskPercent: 1.0,       // % equity yang dirisikokan per trade (mode ATR)
+  fixedLot: 0.01,         // lot tetap untuk semua posisi (mode nominal IDR)
   maxLot: 2.0,
   minLot: 0.01,
-  maxPositions: 2,        // 0 = tanpa batas (dibatasi hanya oleh margin bebas)
+  maxPositions: 0,        // 0 = tanpa batas (dibatasi hanya oleh margin bebas)
   minFreeMarginPct: 20,   // berhenti buka posisi baru bila free margin < % equity ini
-  maxSpread: 0.6,         // USD (dinaikkan agar tidak memblokir entry di live)
-  slAtr: 1.5,             // SL = slAtr x ATR
-  tpAtr: 1.5,             // TP = tpAtr x ATR (1:1 dengan SL)
-  useMoneyStops: false,   // true = tutup posisi pada nominal rupiah tetap (bukan ATR)
-  tpIdr: 20000,           // tutup posisi bila profit >= nominal IDR ini
-  slIdr: 20000,           // tutup posisi bila rugi >= nominal IDR ini
+  maxSpread: 0.30,        // USD — hanya entry saat spread rendah (jauh dari SL)
+  slAtr: 1.5,             // SL = slAtr x ATR (hanya dipakai bila useMoneyStops=false)
+  tpAtr: 1.5,             // TP = tpAtr x ATR (hanya dipakai bila useMoneyStops=false)
+  useMoneyStops: true,    // true = SL/TP & exit pakai nominal rupiah tetap (tanpa ATR)
+  tpIdr: 30000,           // tutup posisi bila profit >= nominal IDR ini
+  slIdr: 30000,           // tutup posisi bila rugi >= nominal IDR ini
   breakEvenIdr: 10000,    // bila profit >= IDR ini, geser SL ke entry (0 = off)
   usdIdrRate: 16000,      // kurs USD->IDR utk konversi (P/L broker dlm USD)
   breakEvenAtr: 0.5,
@@ -303,31 +304,23 @@ class GoldScalperBot extends EventEmitter {
 
     const { side, atrVal, reason } = signal;
     const entry = side === 'buy' ? q.ask : q.bid;
-    const slDist = cfg.slAtr * atrVal;        // jarak SL berbasis ATR (di luar spread)
     let volume, sl, tp, exitInfo, sizeInfo;
 
     if (cfg.useMoneyStops) {
-      // Ukuran lot dihitung DARI nominal IDR + jarak ATR, supaya jarak SL selalu
-      // wajar (di luar spread) dan kerugian di SL ≈ slIdr. Ini mencegah posisi
-      // langsung ketutup: dulu lot dari risk% bisa besar sehingga biaya spread
-      // (dalam IDR) melampaui slIdr dan posisi dianggap kena SL saat itu juga.
+      // Setelan tetap tanpa ATR: LOT TETAP + SL/TP dari nominal IDR.
+      // Dengan lot 0.01, jarak SL 30.000 IDR = ~$1.9 (sangat jauh dari spread),
+      // sehingga posisi tidak mungkin langsung ketutup oleh spread saat entry.
       const rate = cfg.usdIdrRate > 0 ? cfg.usdIdrRate : 16000;
-      const slUsd = (cfg.slIdr > 0 ? cfg.slIdr : cfg.tpIdr) / rate;   // rugi target di SL (USD)
-
-      // jarak SL minimal: max(ATR, 3x spread) supaya aman dari spread saat entry
-      const safeSlDist = Math.max(slDist, (q.spread || 0.2) * 3, 0.10);
-      volume = slUsd / (safeSlDist * CONTRACT_SIZE);
-      volume = Math.max(cfg.minLot, Math.min(cfg.maxLot, Math.floor(volume * 100) / 100));
-
+      volume = Math.max(cfg.minLot, cfg.fixedLot > 0 ? cfg.fixedLot : 0.01);
       const perPrice = volume * CONTRACT_SIZE;   // USD per 1.0 pergerakan harga
-      const SAFETY = 1.4;                        // SL/TP broker sedikit lebih lebar (jaring pengaman)
-      const slDistP = (cfg.slIdr / rate) / perPrice * SAFETY;
-      const tpDistP = (cfg.tpIdr / rate) / perPrice * SAFETY;
+      const slDistP = (cfg.slIdr / rate) / perPrice;
+      const tpDistP = (cfg.tpIdr / rate) / perPrice;
       sl = cfg.slIdr > 0 ? round2(side === 'buy' ? entry - slDistP : entry + slDistP) : null;
       tp = cfg.tpIdr > 0 ? round2(side === 'buy' ? entry + tpDistP : entry - tpDistP) : null;
-      exitInfo = `exit ±IDR (${cfg.slIdr.toLocaleString('id-ID')}/${cfg.tpIdr.toLocaleString('id-ID')}) @ kurs ${rate}, BE ${cfg.breakEvenIdr.toLocaleString('id-ID')}`;
-      sizeInfo = `${volume} lot`;
+      exitInfo = `SL/TP ±IDR ${cfg.slIdr.toLocaleString('id-ID')}/${cfg.tpIdr.toLocaleString('id-ID')} @ kurs ${rate}, BE ${cfg.breakEvenIdr.toLocaleString('id-ID')}`;
+      sizeInfo = `${volume} lot (tetap)`;
     } else {
+      const slDist = cfg.slAtr * atrVal;
       const riskUsd = acc.equity * (cfg.riskPercent / 100);
       volume = riskUsd / (slDist * CONTRACT_SIZE);
       volume = Math.max(cfg.minLot, Math.min(cfg.maxLot, Math.floor(volume * 100) / 100));
