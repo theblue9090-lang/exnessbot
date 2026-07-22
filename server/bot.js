@@ -173,8 +173,13 @@ class GoldScalperBot extends EventEmitter {
     const q = this.broker.getQuote();
     const spread = q && q.spread ? q.spread : 0.05;
 
+    const nowTs = Date.now();
     for (const p of this.broker.getPositions()) {
       if (!p.comment || !String(p.comment).includes('GoldScalper')) continue;
+      // jangan bertindak atas posisi pending (P/L masih estimasi, belum sinkron)
+      if (p.pending) continue;
+      // grace 2 detik: hindari spike spread/sinkron saat baru entry memicu SL palsu
+      if (p.openTime && nowTs - p.openTime < 2000) continue;
       const plIdr = (p.profit || 0) * rate;
 
       // exit nominal — pengecekan utama, presisi ke P/L nyata
@@ -298,35 +303,42 @@ class GoldScalperBot extends EventEmitter {
 
     const { side, atrVal, reason } = signal;
     const entry = side === 'buy' ? q.ask : q.bid;
-    const slDist = cfg.slAtr * atrVal;
+    const slDist = cfg.slAtr * atrVal;        // jarak SL berbasis ATR (di luar spread)
+    let volume, sl, tp, exitInfo, sizeInfo;
 
-    // ukuran lot dari risk % (memakai jarak ATR sebagai basis)
-    const riskUsd = acc.equity * (cfg.riskPercent / 100);
-    let volume = riskUsd / (slDist * CONTRACT_SIZE);
-    volume = Math.max(cfg.minLot, Math.min(cfg.maxLot, Math.floor(volume * 100) / 100));
-
-    // SL/TP: berbasis nominal IDR (money-stops) atau berbasis ATR
-    let sl, tp, exitInfo;
     if (cfg.useMoneyStops) {
+      // Ukuran lot dihitung DARI nominal IDR + jarak ATR, supaya jarak SL selalu
+      // wajar (di luar spread) dan kerugian di SL ≈ slIdr. Ini mencegah posisi
+      // langsung ketutup: dulu lot dari risk% bisa besar sehingga biaya spread
+      // (dalam IDR) melampaui slIdr dan posisi dianggap kena SL saat itu juga.
       const rate = cfg.usdIdrRate > 0 ? cfg.usdIdrRate : 16000;
-      const perPrice = volume * CONTRACT_SIZE;           // USD per 1.0 pergerakan harga
-      // SL/TP broker dipasang sedikit lebih LEBAR (1.3x) sebagai jaring pengaman
-      // saja; penutupan presisi di ±IDR dilakukan pemantau tick, sehingga tidak
-      // "meleset" akibat pembulatan harga di sisi broker.
-      const SAFETY = 1.3;
-      const tpDistP = (cfg.tpIdr / rate) / perPrice * SAFETY;
+      const slUsd = (cfg.slIdr > 0 ? cfg.slIdr : cfg.tpIdr) / rate;   // rugi target di SL (USD)
+
+      // jarak SL minimal: max(ATR, 3x spread) supaya aman dari spread saat entry
+      const safeSlDist = Math.max(slDist, (q.spread || 0.2) * 3, 0.10);
+      volume = slUsd / (safeSlDist * CONTRACT_SIZE);
+      volume = Math.max(cfg.minLot, Math.min(cfg.maxLot, Math.floor(volume * 100) / 100));
+
+      const perPrice = volume * CONTRACT_SIZE;   // USD per 1.0 pergerakan harga
+      const SAFETY = 1.4;                        // SL/TP broker sedikit lebih lebar (jaring pengaman)
       const slDistP = (cfg.slIdr / rate) / perPrice * SAFETY;
+      const tpDistP = (cfg.tpIdr / rate) / perPrice * SAFETY;
       sl = cfg.slIdr > 0 ? round2(side === 'buy' ? entry - slDistP : entry + slDistP) : null;
       tp = cfg.tpIdr > 0 ? round2(side === 'buy' ? entry + tpDistP : entry - tpDistP) : null;
       exitInfo = `exit ±IDR (${cfg.slIdr.toLocaleString('id-ID')}/${cfg.tpIdr.toLocaleString('id-ID')}) @ kurs ${rate}, BE ${cfg.breakEvenIdr.toLocaleString('id-ID')}`;
+      sizeInfo = `${volume} lot`;
     } else {
+      const riskUsd = acc.equity * (cfg.riskPercent / 100);
+      volume = riskUsd / (slDist * CONTRACT_SIZE);
+      volume = Math.max(cfg.minLot, Math.min(cfg.maxLot, Math.floor(volume * 100) / 100));
       const tpDist = cfg.tpAtr * atrVal;
       sl = round2(side === 'buy' ? entry - slDist : entry + slDist);
       tp = round2(side === 'buy' ? entry + tpDist : entry - tpDist);
       exitInfo = `SL ${sl} TP ${tp}`;
+      sizeInfo = `${volume} lot (risk ${fmtUsd(riskUsd)})`;
     }
 
-    this._log('signal', `SINYAL ${side.toUpperCase()} — ${reason} | entry ~${entry} | ${exitInfo} | ${volume} lot (risk ${fmtUsd(riskUsd)})`);
+    this._log('signal', `SINYAL ${side.toUpperCase()} — ${reason} | entry ~${entry} | ${exitInfo} | ${sizeInfo}`);
     const pos = await this.broker.marketOrder(side, volume, sl, tp, 'GoldScalper ' + cfg.timeframe);
     this.lastEntryAt = now;
     this._log('success', `ORDER TEREKSEKUSI #${pos.id}: ${side.toUpperCase()} ${volume} lot @ ${pos.openPrice}`);
