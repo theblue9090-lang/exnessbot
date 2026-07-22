@@ -38,7 +38,7 @@ const DEFAULT_CONFIG = {
   minFreeMarginPct: 20,   // berhenti buka posisi baru bila free margin < % equity ini
   maxSpread: 0.4,         // USD
   slAtr: 1.5,             // SL = slAtr x ATR
-  tpAtr: 1.1,             // TP = tpAtr x ATR
+  tpAtr: 1.5,             // TP = tpAtr x ATR (1:1 dengan SL)
   breakEvenAtr: 0.5,
   trailStartAtr: 0.8,
   trailAtr: 0.8,
