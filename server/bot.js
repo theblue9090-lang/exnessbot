@@ -40,6 +40,10 @@ const DEFAULT_CONFIG = {
   maxSpread: 0.6,         // USD (dinaikkan agar tidak memblokir entry di live)
   slAtr: 1.5,             // SL = slAtr x ATR
   tpAtr: 1.5,             // TP = tpAtr x ATR (1:1 dengan SL)
+  useMoneyStops: false,   // true = tutup posisi pada nominal rupiah tetap (bukan ATR)
+  tpIdr: 20000,           // tutup posisi bila profit >= nominal IDR ini
+  slIdr: 20000,           // tutup posisi bila rugi >= nominal IDR ini
+  usdIdrRate: 16000,      // kurs USD->IDR utk konversi (P/L broker dlm USD)
   breakEvenAtr: 0.5,
   trailStartAtr: 0.8,
   trailAtr: 0.8,
@@ -75,7 +79,7 @@ class GoldScalperBot extends EventEmitter {
         if (cfg[k]) this.config[k] = cfg[k];
       } else if (k === 'entryMode') {
         this.config[k] = cfg[k] === 'candleOpen' ? 'candleOpen' : 'signal';
-      } else if (k === 'aggressive') {
+      } else if (k === 'aggressive' || k === 'useMoneyStops') {
         this.config[k] = cfg[k] === true || cfg[k] === 'true' || cfg[k] === 1 || cfg[k] === '1';
       } else {
         const v = Number(cfg[k]);
@@ -123,6 +127,7 @@ class GoldScalperBot extends EventEmitter {
     if (!this.running) return;
     try {
       this._resetDayIfNeeded();
+      await this._checkMoneyStops();   // tutup ±nominal IDR (dicek tiap tick)
       if (!this._checkDailyGuards()) return;
       await this._managePositions();
       await this._maybeEnter();
@@ -155,8 +160,31 @@ class GoldScalperBot extends EventEmitter {
     return true;
   }
 
+  /**
+   * Tutup posisi bila P/L menyentuh nominal rupiah (dicek tiap tick).
+   * P/L broker dalam USD -> dikonversi ke IDR dgn usdIdrRate.
+   */
+  async _checkMoneyStops() {
+    const cfg = this.config;
+    if (!cfg.useMoneyStops) return;
+    const rate = cfg.usdIdrRate > 0 ? cfg.usdIdrRate : 16000;
+    for (const p of this.broker.getPositions()) {
+      if (!p.comment || !String(p.comment).includes('GoldScalper')) continue;
+      const plIdr = (p.profit || 0) * rate;
+      if (cfg.tpIdr > 0 && plIdr >= cfg.tpIdr) {
+        await this.broker.closePosition(p.id, 'tp-idr');
+        this._log('success', `TP nominal tercapai #${p.id}: +${Math.round(plIdr).toLocaleString('id-ID')} IDR — posisi ditutup.`);
+      } else if (cfg.slIdr > 0 && plIdr <= -cfg.slIdr) {
+        await this.broker.closePosition(p.id, 'sl-idr');
+        this._log('error', `SL nominal tersentuh #${p.id}: ${Math.round(plIdr).toLocaleString('id-ID')} IDR — posisi ditutup.`);
+      }
+    }
+  }
+
   /** Break-even + trailing stop untuk posisi milik bot. */
   async _managePositions() {
+    // saat pakai money-stops, exit dikendalikan nominal IDR (bukan trailing ATR)
+    if (this.config.useMoneyStops) return;
     const candles = this.broker.getCandles(this.config.timeframe, 60);
     const a = atr(candles.slice(0, -1), 14);
     if (!a) return;
@@ -248,15 +276,30 @@ class GoldScalperBot extends EventEmitter {
     const { side, atrVal, reason } = signal;
     const entry = side === 'buy' ? q.ask : q.bid;
     const slDist = cfg.slAtr * atrVal;
-    const tpDist = cfg.tpAtr * atrVal;
-    const sl = round2(side === 'buy' ? entry - slDist : entry + slDist);
-    const tp = round2(side === 'buy' ? entry + tpDist : entry - tpDist);
 
+    // ukuran lot dari risk % (memakai jarak ATR sebagai basis)
     const riskUsd = acc.equity * (cfg.riskPercent / 100);
     let volume = riskUsd / (slDist * CONTRACT_SIZE);
     volume = Math.max(cfg.minLot, Math.min(cfg.maxLot, Math.floor(volume * 100) / 100));
 
-    this._log('signal', `SINYAL ${side.toUpperCase()} — ${reason} | ATR ${atrVal.toFixed(2)} | entry ~${entry} SL ${sl} TP ${tp} | ${volume} lot (risk ${fmtUsd(riskUsd)})`);
+    // SL/TP: berbasis nominal IDR (money-stops) atau berbasis ATR
+    let sl, tp, exitInfo;
+    if (cfg.useMoneyStops) {
+      const rate = cfg.usdIdrRate > 0 ? cfg.usdIdrRate : 16000;
+      const perPrice = volume * CONTRACT_SIZE;           // USD per 1.0 pergerakan harga
+      const tpDistP = (cfg.tpIdr / rate) / perPrice;
+      const slDistP = (cfg.slIdr / rate) / perPrice;
+      sl = cfg.slIdr > 0 ? round2(side === 'buy' ? entry - slDistP : entry + slDistP) : null;
+      tp = cfg.tpIdr > 0 ? round2(side === 'buy' ? entry + tpDistP : entry - tpDistP) : null;
+      exitInfo = `SL/TP ±IDR (${cfg.slIdr.toLocaleString('id-ID')}/${cfg.tpIdr.toLocaleString('id-ID')}) @ kurs ${rate}`;
+    } else {
+      const tpDist = cfg.tpAtr * atrVal;
+      sl = round2(side === 'buy' ? entry - slDist : entry + slDist);
+      tp = round2(side === 'buy' ? entry + tpDist : entry - tpDist);
+      exitInfo = `SL ${sl} TP ${tp}`;
+    }
+
+    this._log('signal', `SINYAL ${side.toUpperCase()} — ${reason} | entry ~${entry} | ${exitInfo} | ${volume} lot (risk ${fmtUsd(riskUsd)})`);
     const pos = await this.broker.marketOrder(side, volume, sl, tp, 'GoldScalper ' + cfg.timeframe);
     this.lastEntryAt = now;
     this._log('success', `ORDER TEREKSEKUSI #${pos.id}: ${side.toUpperCase()} ${volume} lot @ ${pos.openPrice}`);

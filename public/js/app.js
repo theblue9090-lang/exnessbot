@@ -519,6 +519,10 @@ $('btnBotCfg').onclick = async () => {
   $('cfgCooldown').value = cfg.cooldownSec;
   $('cfgDD').value = cfg.maxDailyLossPct;
   $('cfgTarget').value = cfg.dailyProfitTargetPct;
+  $('cfgMoney').checked = !!cfg.useMoneyStops;
+  $('cfgTpIdr').value = cfg.tpIdr;
+  $('cfgSlIdr').value = cfg.slIdr;
+  $('cfgRate').value = cfg.usdIdrRate;
   $('botModal').classList.remove('hidden');
 };
 $('btnCloseCfg').onclick = () => $('botModal').classList.add('hidden');
@@ -537,7 +541,11 @@ $('btnSaveCfg').onclick = async () => {
     maxSpread: $('cfgSpread').value,
     cooldownSec: $('cfgCooldown').value,
     maxDailyLossPct: $('cfgDD').value,
-    dailyProfitTargetPct: $('cfgTarget').value
+    dailyProfitTargetPct: $('cfgTarget').value,
+    useMoneyStops: $('cfgMoney').checked,
+    tpIdr: $('cfgTpIdr').value,
+    slIdr: $('cfgSlIdr').value,
+    usdIdrRate: $('cfgRate').value
   };
   try {
     const data = await api('/api/bot/config', {

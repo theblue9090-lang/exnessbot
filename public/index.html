@@ -200,6 +200,13 @@
         <label>Stop rugi harian (%) <input id="cfgDD" type="number" step="0.5" min="0"></label>
         <label>Target profit harian (%, 0=off) <input id="cfgTarget" type="number" step="0.5" min="0"></label>
       </div>
+      <label class="cfg-agg"><input id="cfgMoney" type="checkbox">
+        <b>Tutup posisi pada nominal IDR</b> — abaikan SL/TP ATR, pakai rupiah tetap</label>
+      <div class="cfg-grid" id="cfgMoneyBox">
+        <label>Tutup jika PROFIT (IDR) <input id="cfgTpIdr" type="number" step="1000" min="0"></label>
+        <label>Tutup jika RUGI (IDR) <input id="cfgSlIdr" type="number" step="1000" min="0"></label>
+        <label>Kurs USD→IDR <input id="cfgRate" type="number" step="100" min="1000"></label>
+      </div>
       <p class="hint">Saat di-start, bot langsung mengeksekusi order secara otomatis
         tanpa konfirmasi, termasuk break-even &amp; trailing stop. <b>Posisi tak
         terbatas + risk tinggi bisa menguras margin dengan cepat</b> — penjaga
