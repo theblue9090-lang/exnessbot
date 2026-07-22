@@ -31,12 +31,13 @@ const DEFAULT_CONFIG = {
   symbol: 'XAUUSD',
   timeframe: 'M1',        // M1 atau M5
   aggressive: false,      // true = filter longgar, entry jauh lebih sering di M1
+  entryMode: 'signal',    // 'signal' | 'candleOpen' (entry tiap pembukaan candle baru)
   riskPercent: 1.0,       // % equity yang dirisikokan per trade
   maxLot: 2.0,
   minLot: 0.01,
   maxPositions: 2,        // 0 = tanpa batas (dibatasi hanya oleh margin bebas)
   minFreeMarginPct: 20,   // berhenti buka posisi baru bila free margin < % equity ini
-  maxSpread: 0.4,         // USD
+  maxSpread: 0.6,         // USD (dinaikkan agar tidak memblokir entry di live)
   slAtr: 1.5,             // SL = slAtr x ATR
   tpAtr: 1.5,             // TP = tpAtr x ATR (1:1 dengan SL)
   breakEvenAtr: 0.5,
@@ -72,6 +73,8 @@ class GoldScalperBot extends EventEmitter {
       if (!(k in DEFAULT_CONFIG)) continue;
       if (k === 'symbol' || k === 'timeframe') {
         if (cfg[k]) this.config[k] = cfg[k];
+      } else if (k === 'entryMode') {
+        this.config[k] = cfg[k] === 'candleOpen' ? 'candleOpen' : 'signal';
       } else if (k === 'aggressive') {
         this.config[k] = cfg[k] === true || cfg[k] === 'true' || cfg[k] === 1 || cfg[k] === '1';
       } else {
@@ -185,6 +188,16 @@ class GoldScalperBot extends EventEmitter {
     }
   }
 
+  /** Catat alasan blokir ke Journal, tapi throttle agar tidak spam (per alasan). */
+  _blocked(reason) {
+    const now = Date.now();
+    this._blockLast = this._blockLast || {};
+    if (now - (this._blockLast[reason] || 0) > 30000) {
+      this._blockLast[reason] = now;
+      this._log('info', 'Belum entry — ' + reason);
+    }
+  }
+
   async _maybeEnter() {
     const cfg = this.config;
     const now = Date.now();
@@ -192,7 +205,10 @@ class GoldScalperBot extends EventEmitter {
 
     // batas jumlah posisi: 0 = tak terbatas (dijaga oleh free margin)
     const botPositions = this.broker.getPositions().filter(p => String(p.comment || '').includes('GoldScalper'));
-    if (cfg.maxPositions > 0 && botPositions.length >= cfg.maxPositions) return;
+    if (cfg.maxPositions > 0 && botPositions.length >= cfg.maxPositions) {
+      this._blocked(`sudah ${botPositions.length}/${cfg.maxPositions} posisi (set Maks posisi = 0 utk tak terbatas)`);
+      return;
+    }
 
     // penjaga margin: berhenti buka posisi baru bila margin bebas menipis,
     // supaya order tidak ditolak broker (yang membuat bot "seolah macet")
@@ -200,30 +216,34 @@ class GoldScalperBot extends EventEmitter {
     if (cfg.minFreeMarginPct > 0 && acc.equity > 0) {
       const freePct = (acc.freeMargin / acc.equity) * 100;
       if (isFinite(freePct) && freePct < cfg.minFreeMarginPct) {
-        if (now - (this._lastMarginWarn || 0) > 60000) {
-          this._lastMarginWarn = now;
-          this._log('warn', `Margin bebas ${freePct.toFixed(0)}% < ${cfg.minFreeMarginPct}% — jeda buka posisi baru sampai margin pulih.`);
-        }
+        this._blocked(`margin bebas ${freePct.toFixed(0)}% < ${cfg.minFreeMarginPct}% — tunggu margin pulih`);
         return;
       }
     }
 
     const q = this.broker.getQuote();
-    if (!q || !q.bid) return;
-    if (q.spread > cfg.maxSpread) return;
+    if (!q || !q.bid) { this._blocked('belum ada harga (pasar mungkin tutup / belum sinkron)'); return; }
+    if (q.spread > cfg.maxSpread) {
+      this._blocked(`spread $${q.spread.toFixed(2)} > maks $${cfg.maxSpread} — naikkan "Maks spread" di ⚙`);
+      return;
+    }
 
-    // warmup adaptif: mode agresif butuh lebih sedikit candle -> live bisa mulai
-    // trading jauh lebih cepat (sebelumnya butuh 80 candle = ~80 menit di M1)
-    const minBars = cfg.aggressive ? 30 : 80;
+    // warmup adaptif: candleOpen paling ringan (butuh sedikit bar utk ATR)
+    const minBars = cfg.entryMode === 'candleOpen' ? 16 : (cfg.aggressive ? 30 : 80);
     const candles = this.broker.getCandles(cfg.timeframe, 260);
-    if (candles.length < minBars) return;
+    if (candles.length < minBars) {
+      this._blocked(`mengumpulkan candle ${candles.length}/${minBars} (butuh ~${minBars} menit di M1 kalau riwayat kosong)`);
+      return;
+    }
     const closed = candles.slice(0, -1); // hanya candle yang sudah close
     const lastCandle = closed[closed.length - 1];
     if (this.lastSignalCandle === lastCandle.time) return; // satu evaluasi per candle
 
-    const signal = cfg.aggressive ? this._computeSignalAggressive(closed) : this._computeSignal(closed);
+    const signal = cfg.entryMode === 'candleOpen'
+      ? this._computeSignalCandleOpen(closed)
+      : (cfg.aggressive ? this._computeSignalAggressive(closed) : this._computeSignal(closed));
     this.lastSignalCandle = lastCandle.time;
-    if (!signal) return;
+    if (!signal) { this._blocked('candle close terbaru belum memenuhi kondisi sinyal'); return; }
 
     const { side, atrVal, reason } = signal;
     const entry = side === 'buy' ? q.ask : q.bid;
@@ -321,6 +341,45 @@ class GoldScalperBot extends EventEmitter {
       return { side: 'sell', atrVal: a, reason: 'agresif M1: EMA5<EMA13 turun + candle bearish (RSI ' + r.toFixed(0) + ')' };
     }
     return null;
+  }
+
+  /**
+   * Metode PEMBUKAAN CANDLE — paling agresif: begitu candle M1 baru terbentuk,
+   * bot langsung entry mengikuti arah momentum candle yang baru saja close
+   * (searah bila candle bullish/bearish; bila doji, ikut arah EMA5 vs EMA13).
+   * Nyaris selalu menghasilkan entry tiap menit.
+   *
+   * CATATAN JUJUR: ini praktis "ikut candle terakhir" — sangat sering entry,
+   * tetapi TIDAK memilih kualitas sinyal. Spread & arah acak jangka pendek
+   * membuat metode ini mudah rugi kalau winrate tidak di atas ~55%. Uji di
+   * akun demo dulu.
+   */
+  _computeSignalCandleOpen(closed) {
+    const n = closed.length - 1;
+    const c = closed[n];
+    if (!c) return null;
+
+    // ATR untuk SL/TP; fallback ke rata-rata range candle bila belum cukup bar
+    let a = atr(closed, 14);
+    if (!a || a <= 0) {
+      let sum = 0, cnt = 0;
+      for (let i = Math.max(0, n - 5); i <= n; i++) { sum += (closed[i].high - closed[i].low); cnt++; }
+      a = cnt ? sum / cnt : (c.close * 0.0006); // fallback terakhir ~0.06% harga
+    }
+    if (!a || a <= 0) return null;
+
+    // arah: candle terakhir bullish -> buy, bearish -> sell, doji -> ikut EMA
+    let side;
+    if (c.close > c.open) side = 'buy';
+    else if (c.close < c.open) side = 'sell';
+    else {
+      const closes = closed.map(x => x.close);
+      const ef = emaSeries(closes, 5)[n];
+      const es = emaSeries(closes, 13)[n];
+      if (ef === null || es === null) return null;
+      side = ef >= es ? 'buy' : 'sell';
+    }
+    return { side, atrVal: a, reason: 'pembukaan candle: ikut arah candle M1 terakhir' };
   }
 
   _log(level, message) {

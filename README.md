@@ -154,7 +154,21 @@ Scalping berbasis konfluensi, evaluasi di setiap **candle close** (M1 atau M5):
 | Proteksi | Auto-stop jika rugi harian ≥ 5% equity (bisa diubah), target profit harian opsional |
 
 Semua parameter bisa diubah dari tombol **⚙** di toolbar. Aktivitas bot
-(sinyal, eksekusi, trailing, proteksi) tercatat di tab **Journal**.
+(sinyal, eksekusi, trailing, proteksi) tercatat di tab **Journal** — termasuk
+**alasan bila belum entry** (spread terlalu lebar, warmup candle, batas posisi,
+margin), supaya mudah tahu kenapa bot diam.
+
+### Mode entry (⚙ → Mode entry)
+
+| Mode | Perilaku |
+|---|---|
+| **Normal** | Konfluensi ketat (EMA+RSI+ATR+body) — paling selektif |
+| **Agresif M1** | Filter longgar (EMA5/EMA13 + candle) — entry ~3× lebih sering |
+| **Pembukaan candle** | Paling agresif: entry mengikuti arah candle M1 terakhir **hampir setiap menit** |
+
+> ⚠️ "Pembukaan candle" praktis mengikuti candle terakhir tanpa menyaring
+> kualitas sinyal — sangat sering entry, tapi mudah rugi ke spread bila winrate
+> tidak di atas ~55%. **Uji di akun demo dulu.**
 
 ## Struktur Proyek
 

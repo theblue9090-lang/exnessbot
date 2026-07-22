@@ -506,7 +506,9 @@ $('btnBotCfg').onclick = async () => {
     }
   }
   $('cfgTf').value = cfg.timeframe;
-  $('cfgAggressive').checked = !!cfg.aggressive;
+  $('cfgEntryMode').value = cfg.entryMode === 'candleOpen'
+    ? 'candleOpen'
+    : (cfg.aggressive ? 'signal-aggressive' : 'signal-normal');
   $('cfgRisk').value = cfg.riskPercent;
   $('cfgMaxPos').value = cfg.maxPositions;
   $('cfgMinMargin').value = cfg.minFreeMarginPct;
@@ -521,9 +523,11 @@ $('btnBotCfg').onclick = async () => {
 };
 $('btnCloseCfg').onclick = () => $('botModal').classList.add('hidden');
 $('btnSaveCfg').onclick = async () => {
+  const mode = $('cfgEntryMode').value;
   const body = {
     timeframe: $('cfgTf').value,
-    aggressive: $('cfgAggressive').checked,
+    entryMode: mode === 'candleOpen' ? 'candleOpen' : 'signal',
+    aggressive: mode === 'signal-aggressive' || mode === 'candleOpen',
     riskPercent: $('cfgRisk').value,
     maxPositions: $('cfgMaxPos').value,
     minFreeMarginPct: $('cfgMinMargin').value,
