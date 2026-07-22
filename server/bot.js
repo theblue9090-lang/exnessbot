@@ -30,8 +30,8 @@ const { CONTRACT_SIZE } = require('./simulator');
 const DEFAULT_CONFIG = {
   symbol: 'XAUUSD',
   timeframe: 'M1',        // M1 atau M5
-  aggressive: false,      // true = filter longgar, entry jauh lebih sering di M1
-  entryMode: 'signal',    // 'signal' | 'candleOpen' (entry tiap pembukaan candle baru)
+  aggressive: true,       // true = filter longgar, entry jauh lebih sering di M1
+  entryMode: 'meanRev',   // 'signal' | 'candleOpen' | 'meanRev' (scalping winrate tinggi)
   riskPercent: 1.0,       // % equity yang dirisikokan per trade
   maxLot: 2.0,
   minLot: 0.01,
@@ -79,7 +79,7 @@ class GoldScalperBot extends EventEmitter {
       if (k === 'symbol' || k === 'timeframe') {
         if (cfg[k]) this.config[k] = cfg[k];
       } else if (k === 'entryMode') {
-        this.config[k] = cfg[k] === 'candleOpen' ? 'candleOpen' : 'signal';
+        this.config[k] = ['candleOpen', 'meanRev', 'signal'].includes(cfg[k]) ? cfg[k] : 'signal';
       } else if (k === 'aggressive' || k === 'useMoneyStops') {
         this.config[k] = cfg[k] === true || cfg[k] === 'true' || cfg[k] === 1 || cfg[k] === '1';
       } else {
@@ -352,9 +352,10 @@ class GoldScalperBot extends EventEmitter {
     const lastCandle = closed[closed.length - 1];
     if (this.lastSignalCandle === lastCandle.time) return; // satu evaluasi per candle
 
-    const signal = cfg.entryMode === 'candleOpen'
-      ? this._computeSignalCandleOpen(closed)
-      : (cfg.aggressive ? this._computeSignalAggressive(closed) : this._computeSignal(closed));
+    let signal;
+    if (cfg.entryMode === 'meanRev') signal = this._computeSignalMeanReversion(closed);
+    else if (cfg.entryMode === 'candleOpen') signal = this._computeSignalCandleOpen(closed);
+    else signal = cfg.aggressive ? this._computeSignalAggressive(closed) : this._computeSignal(closed);
     this.lastSignalCandle = lastCandle.time;
     if (!signal) { this._blocked('candle close terbaru belum memenuhi kondisi sinyal'); return; }
 
@@ -384,6 +385,18 @@ class GoldScalperBot extends EventEmitter {
       tp = cfg.tpIdr > 0 ? round2(side === 'buy' ? entry + tpDistP : entry - tpDistP) : null;
       exitInfo = `exit ±IDR (${cfg.slIdr.toLocaleString('id-ID')}/${cfg.tpIdr.toLocaleString('id-ID')}) @ kurs ${rate}, BE ${cfg.breakEvenIdr.toLocaleString('id-ID')}`;
       sizeInfo = `${volume} lot`;
+    } else if (signal.targetPrice) {
+      // Mean-reversion (winrate tinggi): TP kecil = jarak ke mean (mudah tercapai),
+      // SL lebih lebar. Banyak menang kecil; risiko: sesekali rugi lebih besar.
+      const tpDist = Math.abs(signal.targetPrice - entry);
+      const slDistMr = Math.max(tpDist * 1.8, (q.spread || 0.2) * 4, 0.15);
+      const riskUsd = acc.equity * (cfg.riskPercent / 100);
+      volume = riskUsd / (slDistMr * CONTRACT_SIZE);
+      volume = Math.max(cfg.minLot, Math.min(cfg.maxLot, Math.floor(volume * 100) / 100));
+      tp = round2(signal.targetPrice);
+      sl = round2(side === 'buy' ? entry - slDistMr : entry + slDistMr);
+      exitInfo = `TP ${tp} (mean) SL ${sl} — winrate tinggi`;
+      sizeInfo = `${volume} lot (risk ${fmtUsd(riskUsd)})`;
     } else {
       const riskUsd = acc.equity * (cfg.riskPercent / 100);
       volume = riskUsd / (slDist * CONTRACT_SIZE);
@@ -519,6 +532,54 @@ class GoldScalperBot extends EventEmitter {
       side = ef >= es ? 'buy' : 'sell';
     }
     return { side, atrVal: a, reason: 'pembukaan candle: ikut arah candle M1 terakhir' };
+  }
+
+  /**
+   * Scalping M1 WINRATE TINGGI — mean reversion (fade harga ekstrem).
+   * Saat harga menjulur jauh dari rata-rata (keluar Bollinger Band) DAN RSI
+   * ekstrem, bot melawan arah menuju kembali ke mean (SMA20) dengan TP kecil.
+   * Target = mean -> mudah tercapai -> winrate tinggi. Konfirmasi reversal
+   * (candle berbalik) menyaring sinyal. Agresif: pakai band 1.8σ & RSI 38/62.
+   *
+   * CATATAN JUJUR: winrate tinggi = banyak menang kecil, TAPI risk:reward
+   * negatif — sesekali harga menembus terus (SL lebih lebar) dan satu kerugian
+   * bisa menghapus beberapa kemenangan. Break-even ratchet & proteksi tetap aktif.
+   */
+  _computeSignalMeanReversion(closed) {
+    const n = closed.length - 1;
+    const closes = closed.map(c => c.close);
+    if (n < 20) return null;
+
+    // Bollinger Band 20
+    const period = 20;
+    let sum = 0;
+    for (let i = n - period + 1; i <= n; i++) sum += closes[i];
+    const mean = sum / period;
+    let varSum = 0;
+    for (let i = n - period + 1; i <= n; i++) varSum += (closes[i] - mean) ** 2;
+    const sd = Math.sqrt(varSum / period);
+    if (sd <= 0) return null;
+    const upper = mean + 1.8 * sd;
+    const lower = mean - 1.8 * sd;
+
+    const r = rsi(closes.slice(-40), 14);
+    const a = atr(closed, 14);
+    if (r === null || !a || a <= 0) return null;
+
+    const c = closed[n];
+    const prev = closed[n - 1];
+
+    // BUY: harga turun jauh di bawah band + RSI oversold + candle mulai berbalik naik
+    if (c.close <= lower && r < 38 && c.close >= c.open && c.close > prev.close) {
+      return { side: 'buy', atrVal: a, targetPrice: mean,
+        reason: `mean-reversion: harga di bawah band (RSI ${r.toFixed(0)}) -> target mean ${round2(mean)}` };
+    }
+    // SELL: harga naik jauh di atas band + RSI overbought + candle mulai berbalik turun
+    if (c.close >= upper && r > 62 && c.close <= c.open && c.close < prev.close) {
+      return { side: 'sell', atrVal: a, targetPrice: mean,
+        reason: `mean-reversion: harga di atas band (RSI ${r.toFixed(0)}) -> target mean ${round2(mean)}` };
+    }
+    return null;
   }
 
   _log(level, message) {

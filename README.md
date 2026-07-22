@@ -162,9 +162,15 @@ margin), supaya mudah tahu kenapa bot diam.
 
 | Mode | Perilaku |
 |---|---|
+| **Scalping M1 winrate tinggi** ⭐ (default) | Mean-reversion: fade harga ekstrem (keluar Bollinger 1.8σ + RSI 38/62) menuju mean. TP kecil (di mean) = sering tercapai; SL lebih lebar |
 | **Normal** | Konfluensi ketat (EMA+RSI+ATR+body) — paling selektif |
 | **Agresif M1** | Filter longgar (EMA5/EMA13 + candle) — entry ~3× lebih sering |
 | **Pembukaan candle** | Paling agresif: entry mengikuti arah candle M1 terakhir **hampir setiap menit** |
+
+> ⚠️ **Winrate tinggi ≠ profit terjamin.** Mean-reversion menang sering (TP kecil)
+> tapi risk:reward negatif: sesekali harga menembus terus dan satu kerugian (SL
+> lebih lebar) bisa menghapus beberapa kemenangan kecil. Break-even ratchet
+> membantu, tapi tetap **uji di demo** dan pahami trade-off-nya.
 
 > ⚠️ "Pembukaan candle" praktis mengikuti candle terakhir tanpa menyaring
 > kualitas sinyal — sangat sering entry, tapi mudah rugi ke spread bila winrate

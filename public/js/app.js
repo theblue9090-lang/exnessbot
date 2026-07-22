@@ -506,9 +506,11 @@ $('btnBotCfg').onclick = async () => {
     }
   }
   $('cfgTf').value = cfg.timeframe;
-  $('cfgEntryMode').value = cfg.entryMode === 'candleOpen'
-    ? 'candleOpen'
-    : (cfg.aggressive ? 'signal-aggressive' : 'signal-normal');
+  $('cfgEntryMode').value = cfg.entryMode === 'meanRev'
+    ? 'meanRev'
+    : cfg.entryMode === 'candleOpen'
+      ? 'candleOpen'
+      : (cfg.aggressive ? 'signal-aggressive' : 'signal-normal');
   $('cfgRisk').value = cfg.riskPercent;
   $('cfgMaxPos').value = cfg.maxPositions;
   $('cfgMinMargin').value = cfg.minFreeMarginPct;
@@ -529,10 +531,11 @@ $('btnBotCfg').onclick = async () => {
 $('btnCloseCfg').onclick = () => $('botModal').classList.add('hidden');
 $('btnSaveCfg').onclick = async () => {
   const mode = $('cfgEntryMode').value;
+  const entryMode = mode === 'candleOpen' ? 'candleOpen' : mode === 'meanRev' ? 'meanRev' : 'signal';
   const body = {
     timeframe: $('cfgTf').value,
-    entryMode: mode === 'candleOpen' ? 'candleOpen' : 'signal',
-    aggressive: mode === 'signal-aggressive' || mode === 'candleOpen',
+    entryMode,
+    aggressive: mode === 'signal-aggressive' || mode === 'candleOpen' || mode === 'meanRev',
     riskPercent: $('cfgRisk').value,
     maxPositions: $('cfgMaxPos').value,
     minFreeMarginPct: $('cfgMinMargin').value,
